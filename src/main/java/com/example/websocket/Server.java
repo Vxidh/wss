@@ -14,27 +14,27 @@ import com.google.gson.JsonObject;
 
 public class Server extends WebSocketServer {
 
-    private static final long IDLE_TIMEOUT_MS = 30_000; // 30 seconds
+    private static final long IDLE_TIMEOUT_MS = 30_000; 
 
-    private enum NodeStatus { ACTIVE, IDLE }
+    public enum NodeStatus { ACTIVE, IDLE }
 
-    private static class NodeInfo {
-        final WebSocket conn;
-        volatile long lastActivity;
-        volatile NodeStatus status;
+    public static class NodeInfo {
+        public final WebSocket conn;
+        public volatile long lastActivity;
+        public volatile NodeStatus status;
 
-        NodeInfo(WebSocket conn) {
+        public NodeInfo(WebSocket conn) {
             this.conn = conn;
             this.lastActivity = System.currentTimeMillis();
             this.status = NodeStatus.ACTIVE;
         }
 
-        void updateActivity() {
+        public void updateActivity() {
             this.lastActivity = System.currentTimeMillis();
             this.status = NodeStatus.ACTIVE;
         }
 
-        boolean isIdle() {
+        public boolean isIdle() {
             return System.currentTimeMillis() - lastActivity > IDLE_TIMEOUT_MS;
         }
     }
@@ -103,7 +103,7 @@ public class Server extends WebSocketServer {
     }
 
     private String getNodeIdFromHandshake(ClientHandshake handshake) {
-        String resource = handshake.getResourceDescriptor();  // like "/?nodeId=abc"
+        String resource = handshake.getResourceDescriptor();  // like "/ws?nodeId=abc" with Nginx
         if (resource != null && resource.contains("nodeId=")) {
             String[] parts = resource.split("nodeId=");
             if (parts.length > 1) {
@@ -113,6 +113,10 @@ public class Server extends WebSocketServer {
             }
         }
         return null;
+    }
+
+    public ConcurrentHashMap<String, NodeInfo> getNodes() {
+        return nodes;
     }
 
     public static void main(String[] args) {
