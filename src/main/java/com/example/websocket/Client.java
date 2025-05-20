@@ -13,13 +13,12 @@ public class Client extends WebSocketClient {
     
     public Client(URI serverUri) throws AWTException {
         super(serverUri);
-        this.robot = new Robot(); // for controlling mouse & keyboard
+        this.robot = new Robot(); 
     }
     
     @Override
     public void onOpen(ServerHandshake handshakedata) {
         System.out.println("Connected to server");
-        // Send initial presence message
         sendPing();
     }
     
@@ -36,7 +35,7 @@ public class Client extends WebSocketClient {
                     robot.mouseMove(x, y);
                     break;
                 case "click":
-                    int button = json.optInt("button", 1); // 1 = left, 2 = middle, 3 = right
+                    int button = json.optInt("button", 1); 
                     int awtButton = InputEvent.BUTTON1_DOWN_MASK;
                     if (button == 2) awtButton = InputEvent.BUTTON2_DOWN_MASK;
                     else if (button == 3) awtButton = InputEvent.BUTTON3_DOWN_MASK;
@@ -78,7 +77,7 @@ public class Client extends WebSocketClient {
     }
 
     private boolean isSpecialShiftChar(char c) {
-        String shiftChars = "~!@#$%^&*()_+{}|:\\\\\\\\\\\\\\\"<>?";
+        String shiftChars = "~!@#$%^&*()_+{}|:\\\"<>?";
         return shiftChars.indexOf(c) >= 0;
     }
     
@@ -110,11 +109,15 @@ public class Client extends WebSocketClient {
     public static void main(String[] args) throws Exception {
         String nodeId = args.length > 0 ? args[0] : "node-" + System.currentTimeMillis();
         String host = args.length > 1 ? args[1] : "localhost:8080";
-        URI serverUri = new URI("ws://" + host + "/ws?nodeId=" + nodeId);
+        
+        // IMPORTANT: Replace this with the actual secret key used by your server
+        String authToken = "your_secret_key_here";
+        
+        URI serverUri = new URI("ws://" + host + "/ws?nodeId=" + nodeId + "&authToken=" + authToken);
         Client client = new Client(serverUri);
         client.connectBlocking();
-        
-        // Keep the client alive
+
+        // Keep the client alive and send ping every 60 seconds
         while (client.isOpen()) {
             Thread.sleep(60000);
             client.sendPing();

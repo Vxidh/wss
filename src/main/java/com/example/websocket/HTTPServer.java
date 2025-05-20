@@ -13,36 +13,48 @@ import com.google.gson.Gson;
 public class HTTPServer {
     private final Server wsServer;
     private final Gson gson = new Gson();
-    
+
+    private static final String AUTH_SECRET = "cr7"; // Static token for now. Need to migrate to JWT to make sure that there's a proper auth system in place.
+
     public HTTPServer(Server wsServer) {
         this.wsServer = wsServer;
     }
-    
+
     public void start(int port) {
         port(port);
-        
-        // Enable CORS for web clients
+
         options("/*", (request, response) -> {
             String accessControlRequestHeaders = request.headers("Access-Control-Request-Headers");
             if (accessControlRequestHeaders != null) {
                 response.header("Access-Control-Allow-Headers", accessControlRequestHeaders);
             }
-            
+
             String accessControlRequestMethod = request.headers("Access-Control-Request-Method");
             if (accessControlRequestMethod != null) {
                 response.header("Access-Control-Allow-Methods", accessControlRequestMethod);
             }
-            
+
             return "OK";
         });
-        
+
         before((request, response) -> {
             response.header("Access-Control-Allow-Origin", "*");
             response.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-            response.header("Access-Control-Allow-Headers", "Content-Type");
+            response.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
         });
-        
-        // API endpoints for test management
+
+        before("/api/*", (req, res) -> {
+            String authHeader = req.headers("Authorization");
+            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                halt(401, "{\"error\":\"Missing or invalid Authorization header\"}");
+            } else {
+                String token = authHeader.substring("Bearer ".length());
+                if (!token.equals(AUTH_SECRET)) {
+                    halt(401, "{\"error\":\"Invalid token\"}");
+                }
+            }
+        });
+
         get("/api/nodes", (req, res) -> {
             List<Map<String, Object>> nodesList = new ArrayList<>();
             wsServer.getNodes().forEach((nodeId, info) -> {
@@ -55,7 +67,7 @@ public class HTTPServer {
             res.type("application/json");
             return gson.toJson(nodesList);
         });
-        
+
         post("/api/send/:nodeId", (req, res) -> {
             String nodeId = req.params(":nodeId");
             JsonObject command;
@@ -74,25 +86,24 @@ public class HTTPServer {
                 return "{\"error\":\"Node " + nodeId + " not connected or idle\"}";
             }
         });
-        
-        // Client setup page
+
         get("/", (req, res) -> {
             res.type("text/html");
             return getClientSetupPage();
         });
-        
+
         get("/health", (req, res) -> {
             res.type("text/plain");
             return "OK";
         });
-        
+
         exception(Exception.class, (e, req, res) -> {
             res.status(500);
             res.body("{\"error\":\"Internal server error\"}");
             e.printStackTrace();
         });
     }
-    
+
     private String getClientSetupPage() {
         return "<!DOCTYPE html>" +
                "<html><head><title>Bot Test Node Setup</title>" +
@@ -134,7 +145,6 @@ public class HTTPServer {
                "  };" +
                "  ws.onmessage = (event) => {" +
                "    log('Received: ' + event.data);" +
-               "    // Process commands here" +
                "  };" +
                "  ws.onclose = () => {" +
                "    log('Disconnected');" +
@@ -154,7 +164,7 @@ public class HTTPServer {
                "</script>" +
                "</div></body></html>";
     }
-    
+
     public static void main(String[] args) {
         int wsPort = 8080;
         int httpPort = 4567;

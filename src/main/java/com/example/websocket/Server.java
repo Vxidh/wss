@@ -11,10 +11,12 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 public class Server extends WebSocketServer {
 
-    private static final long IDLE_TIMEOUT_MS = 30_000; 
+    private static final long IDLE_TIMEOUT_MS = 30000; 
+    private static final String AUTH_SECRET = "cr7"; //Static token for now. Need to migrate to JWT to make sure that there's a proper auth system in place.
 
     public enum NodeStatus { ACTIVE, IDLE }
 
@@ -49,11 +51,20 @@ public class Server extends WebSocketServer {
 
     @Override
     public void onOpen(WebSocket conn, ClientHandshake handshake) {
-        String nodeId = getNodeIdFromHandshake(handshake);
+        System.out.println("Handshake resource: " + handshake.getResourceDescriptor());
+
+        String nodeId = getQueryParam(handshake.getResourceDescriptor(), "nodeId");
+        String authToken = getQueryParam(handshake.getResourceDescriptor(), "authToken");
+
         if (nodeId == null || nodeId.isEmpty()) {
             conn.close(1008, "Missing nodeId");
             return;
         }
+        if (!validateAuthToken(authToken)) {
+            conn.close(1008, "Invalid auth token");
+            return;
+        }
+
         nodes.put(nodeId, new NodeInfo(conn));
         System.out.println("Node connected: " + nodeId);
     }
@@ -66,10 +77,26 @@ public class Server extends WebSocketServer {
 
     @Override
     public void onMessage(WebSocket conn, String message) {
+        JsonObject json;
+        try {
+            json = JsonParser.parseString(message).getAsJsonObject();
+        } catch (Exception e) {
+            System.out.println("Invalid JSON from client: " + message);
+            return;
+        }
+
         nodes.forEach((nodeId, info) -> {
             if (info.conn.equals(conn)) {
-                info.updateActivity();
-                System.out.println("Received from " + nodeId + ": " + message);
+                if (json.has("type") && json.get("type").getAsString().equals("ping")) {
+                    info.updateActivity();
+                    JsonObject pong = new JsonObject();
+                    pong.addProperty("type", "pong");
+                    conn.send(pong.toString());
+                    System.out.println("Ping received from " + nodeId + ", sent pong.");
+                } else {
+                    info.updateActivity();
+                    System.out.println("Received from " + nodeId + ": " + message);
+                }
             }
         });
     }
@@ -102,17 +129,22 @@ public class Server extends WebSocketServer {
         return false;
     }
 
-    private String getNodeIdFromHandshake(ClientHandshake handshake) {
-        String resource = handshake.getResourceDescriptor();  // like "/ws?nodeId=abc" with Nginx
-        if (resource != null && resource.contains("nodeId=")) {
-            String[] parts = resource.split("nodeId=");
-            if (parts.length > 1) {
-                String nodeIdPart = parts[1];
-                int ampIndex = nodeIdPart.indexOf('&');
-                return ampIndex != -1 ? nodeIdPart.substring(0, ampIndex) : nodeIdPart;
+    private String getQueryParam(String resource, String key) {
+        if (resource == null || !resource.contains("?")) return null;
+        String query = resource.substring(resource.indexOf('?') + 1);
+        for (String param : query.split("&")) {
+            String[] kv = param.split("=");
+            if (kv.length == 2 && kv[0].equals(key)) {
+                return kv[1];
             }
         }
         return null;
+    }
+
+    private boolean validateAuthToken(String token) {
+        //To-Do: Replace this with real JWT validation or your token system
+        if (token == null) return false;
+        return token.equals(AUTH_SECRET);
     }
 
     public ConcurrentHashMap<String, NodeInfo> getNodes() {
