@@ -7,16 +7,15 @@ start "Bot Server" java -cp target\websocket-bot-server-1.0-SNAPSHOT-jar-with-de
 
 timeout /t 5
 
-echo Starting Nginx...
-start "Nginx" /D "C:\nginx" nginx -c "%CD%\config\nginx.conf"
+echo Starting Apache...
+net start Apache2.4
 
 echo All services started!
 echo Press any key to stop...
 pause > nul
 
-echo Stopping Nginx...
-taskkill /F /FI "WINDOWTITLE eq Nginx*"
-"C:\nginx\nginx.exe" -s stop
+echo Stopping Apache...
+net stop Apache2.4
 
 echo Stopping Bot Server...
 taskkill /F /FI "WINDOWTITLE eq Bot Server*"

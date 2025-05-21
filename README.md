@@ -1,22 +1,29 @@
-# Bot Server
+# Bot Server  
 
-A Java backend for coordinating automated test actions (mouse, keyboard, gestures) across multiple remote nodes using WebSocket and HTTP APIs.
+Java backend for remote test automation. Coordinate mouse, keyboard, and gesture actions across multiple nodes using WebSocket and HTTP APIs. Includes simple token auth, node status, and a web setup page.
 
 ## Features
-- WebSocket server for real-time communication with remote nodes (clients)
-- HTTP API to send commands to specific nodes
-- Supports mouse movement, clicks, keyboard typing, and custom commands
-- Node activity tracking and idle detection
+- WebSocket server for real-time node control
+- HTTP API for sending commands and listing nodes
+- Simple token-based node authentication (`authToken`)
+- Node status and last activity tracking
+- Web client setup page for easy onboarding
 
-## Components
-- **Server.java**: WebSocket server managing node connections and command delivery
-- **HTTPServer.java**: HTTP API for sending commands to nodes and health checks
-- **Client.java**: Example client that connects to the server and executes received commands using Java's `Robot` class
+## Quick Start
+1. Build:
+   ```powershell
+   mvn clean package
+   ```
+2. Run everything:
+   ```powershell
+   .\start.bat
+   ```
+   - WebSocket: `ws://localhost:8080/ws?nodeId=YOUR_NODE_ID&authToken=cr7`
+   - HTTP API: `http://localhost:4567`
 
-## Dependencies
-- Java 11+
-- [Java-WebSocket](https://github.com/TooTallNate/Java-WebSocket)
-- [SparkJava](http://sparkjava.com/)
-- [Gson](https://github.com/google/gson)
-- [org.json](https://github.com/stleary/JSON-java)
+## Auth
+- All nodes need `authToken` (default: `cr7`). JWT planned.
+
+## Status
+Work in progress. Auth, node management, and web onboarding are live.
 
