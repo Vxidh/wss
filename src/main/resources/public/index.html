@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Bot Test Node Setup</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .status { margin: 20px 0; padding: 10px; border-radius: 5px; }
+        .connected { background-color: #dff0d8; }
+        .disconnected { background-color: #f2dede; }
+        button { padding: 10px; margin: 10px 5px 10px 0; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Bot Test Node Setup</h1>
+    <p>This page helps you set up a test node that will connect to the test server.</p>
+    <div>
+        <label for="nodeId">Node ID: </label>
+        <input type="text" id="nodeId" value="node-<span id='ts'></span>">
+    </div>
+    <div>
+        <label for="authToken">Auth Token: </label>
+        <input type="text" id="authToken" placeholder="Enter your JWT token">
+        <button id="getJwtBtn" type="button">Get JWT for Node ID</button>
+    </div>
+    <div style="margin:10px 0;color:#888;font-size:0.95em">
+        Tip: Click 'Get JWT for Node ID' to generate a token for the entered Node ID.
+    </div>
+    <div>
+        <button id="connectBtn">Connect Node</button>
+        <button id="disconnectBtn" disabled>Disconnect Node</button>
+    </div>
+    <div id="status" class="status disconnected">Disconnected</div>
+    <div id="log"></div>
+</div>
+<script>
+    // Set timestamp for default nodeId
+    document.getElementById('nodeId').value = 'node-' + Date.now();
+
+    const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+    const getJwtBtn = document.getElementById('getJwtBtn');
+    let ws = null;
+
+    connectBtn.addEventListener('click', () => {
+        const nodeId = document.getElementById('nodeId').value;
+        const authToken = document.getElementById('authToken').value;
+        if (!nodeId) { alert('Please enter a Node ID'); return; }
+        if (!authToken) { alert('Please enter an Auth Token'); return; }
+        connect(nodeId, authToken);
+    });
+
+    disconnectBtn.addEventListener('click', () => { if (ws) ws.close(); });
+
+    getJwtBtn.addEventListener('click', () => {
+        const nodeId = document.getElementById('nodeId').value;
+        if (!nodeId) { alert('Please enter a Node ID'); return; }
+        fetch('/api/generate-jwt/' + encodeURIComponent(nodeId))
+            .then(resp => resp.json())
+            .then(data => {
+                if (data.token) {
+                    document.getElementById('authToken').value = data.token;
+                    log('JWT generated for ' + nodeId);
+                } else {
+                    alert('Error: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(err => alert('Failed to fetch JWT: ' + err));
+    });
+
+    function connect(nodeId, authToken) {
+        const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = protocol + '//' + location.host + '/ws?nodeId=' + encodeURIComponent(nodeId) + '&authToken=' + encodeURIComponent(authToken);
+        log('Connecting to ' + wsUrl);
+        ws = new WebSocket(wsUrl);
+        ws.onopen = () => {
+            log('Connected');
+            document.getElementById('status').textContent = 'Connected as ' + nodeId;
+            document.getElementById('status').className = 'status connected';
+            connectBtn.disabled = true;
+            disconnectBtn.disabled = false;
+        };
+        ws.onmessage = (event) => { log('Received: ' + event.data); };
+        ws.onclose = () => {
+            log('Disconnected');
+            document.getElementById('status').textContent = 'Disconnected';
+            document.getElementById('status').className = 'status disconnected';
+            connectBtn.disabled = false;
+            disconnectBtn.disabled = true;
+        };
+        ws.onerror = (error) => { log('Error: ' + error); }
+    }
+
+    function log(message) {
+        const logDiv = document.getElementById('log');
+        const entry = document.createElement('div');
+        entry.textContent = new Date().toLocaleTimeString() + ': ' + message;
+        logDiv.prepend(entry);
+    }
+</script>
+</body>
+</html>

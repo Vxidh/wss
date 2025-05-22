@@ -20,6 +20,8 @@ public class HTTPServer {
 
    public void start(int port) {
        port(port);
+       // Serve static files from /public directory
+       staticFiles.location("/public");
        configureCORS();
        configureRoutes();
        configureErrorHandling();
@@ -50,25 +52,34 @@ public class HTTPServer {
            if (req.pathInfo().startsWith("/api/generate-jwt")) {
                return;
            }
-           String authHeader = req.headers("Authorization");
-           if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-               System.err.println("[AUTH ERROR] Missing or invalid Authorization header for " + req.requestMethod() + " " + req.pathInfo() + " from " + req.ip());
-               res.type("application/json");
-               res.header("Access-Control-Allow-Origin", "*");
-               halt(401, "{\"error\":\"Missing or invalid Authorization header\"}");
-           }
-
-           String token = authHeader.substring("Bearer ".length());
-           try {
-               JWTUtil.validateToken(token);
-           } catch (JwtException e) {
-               System.err.println("[AUTH ERROR] Invalid or expired token for " + req.requestMethod() + " " + req.pathInfo() + " from " + req.ip());
-               e.printStackTrace();
-               res.type("application/json");
-               res.header("Access-Control-Allow-Origin", "*");
-               halt(401, "{\"error\":\"Invalid or expired token\"}");
-           }
+           authenticateRequest(req, res);
        });
+   }
+
+   private void authenticateRequest(spark.Request req, spark.Response res) {
+       String authHeader = req.headers("Authorization");
+       if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+           logAuthError(req, "Missing or invalid Authorization header");
+           sendErrorResponse(res, 401, "Missing or invalid Authorization header");
+       }
+       String token = authHeader.substring("Bearer ".length());
+       try {
+           JWTUtil.validateToken(token);
+       } catch (JwtException e) {
+           logAuthError(req, "Invalid or expired token");
+           sendErrorResponse(res, 401, "Invalid or expired token");
+       }
+   }
+
+   private void sendErrorResponse(spark.Response res, int status, String message) {
+       res.status(status);
+       res.type("application/json");
+       res.header("Access-Control-Allow-Origin", "*");
+       halt(status, "{\"error\":\"" + message + "\"}");
+   }
+
+   private void logAuthError(spark.Request req, String message) {
+       System.err.println("[AUTH ERROR] " + message + " for " + req.requestMethod() + " " + req.pathInfo() + " from " + req.ip());
    }
 
    private void configureRoutes() {
@@ -146,20 +157,31 @@ public class HTTPServer {
            return "{\"nodeId\":\"" + nodeId + "\",\"token\":\"" + token + "\"}";
        });
 
+       // Serve static HTML for "/" and "/nodes"
        get("/", (req, res) -> {
            res.type("text/html");
-           return getClientSetupPage();
+           // Serve index.html from /public
+           return renderStaticHtml("index.html");
+       });
+
+       get("/nodes", (req, res) -> {
+           res.type("text/html");
+           return renderStaticHtml("nodes.html");
        });
 
        get("/health", (req, res) -> {
            res.type("text/plain");
            return "OK";
        });
+   }
 
-       get("/nodes", (req, res) -> {
-           res.type("text/html");
-           return getNodesPage();
-       });
+   private String renderStaticHtml(String filename) {
+       try (java.io.InputStream is = getClass().getResourceAsStream("/public/" + filename)) {
+           if (is == null) return "<h1>File not found: " + filename + "</h1>";
+           return new String(is.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+       } catch (Exception e) {
+           return "<h1>Error loading " + filename + "</h1>";
+       }
    }
 
    private void configureErrorHandling() {
@@ -171,123 +193,6 @@ public class HTTPServer {
            res.header("Access-Control-Allow-Origin", "*");
            res.body("{\"error\":\"Internal server error\"}");
        });
-   }
-
-   private String getClientSetupPage() {
-       long timestamp = System.currentTimeMillis();
-       return "<!DOCTYPE html>" +
-               "<html><head><title>Bot Test Node Setup</title>" +
-               "<style>" +
-               "body { font-family: Arial, sans-serif; margin: 20px; }" +
-               ".container { max-width: 800px; margin: 0 auto; }" +
-               ".status { margin: 20px 0; padding: 10px; border-radius: 5px; }" +
-               ".connected { background-color: #dff0d8; }" +
-               ".disconnected { background-color: #f2dede; }" +
-               "button { padding: 10px; margin: 10px 5px 10px 0; }" +
-               "</style></head>" +
-               "<body><div class='container'>" +
-               "<h1>Bot Test Node Setup</h1>" +
-               "<p>This page helps you set up a test node that will connect to the test server.</p>" +
-               "<div><label for='nodeId'>Node ID: </label>" +
-               "<input type='text' id='nodeId' value='node-" + timestamp + "'></div>" +
-               "<div><label for='authToken'>Auth Token: </label>" +
-               "<input type='text' id='authToken' placeholder='Enter your JWT token'>" +
-               "<button id='getJwtBtn' type='button'>Get JWT for Node ID</button></div>" +
-               "<div style='margin:10px 0;color:#888;font-size:0.95em'>" +
-               "Tip: Click 'Get JWT for Node ID' to generate a token for the entered Node ID." +
-               "</div>" +
-               "<div>" +
-               "<button id='connectBtn'>Connect Node</button>" +
-               "<button id='disconnectBtn' disabled>Disconnect Node</button>" +
-               "</div>" +
-               "<div id='status' class='status disconnected'>Disconnected</div>" +
-               "<div id='log'></div>" +
-               "<script>" +
-               "const connectBtn = document.getElementById('connectBtn');" +
-               "const disconnectBtn = document.getElementById('disconnectBtn');" +
-               "const getJwtBtn = document.getElementById('getJwtBtn');" +
-               "let ws = null;" +
-               "connectBtn.addEventListener('click', () => {" +
-               "  const nodeId = document.getElementById('nodeId').value;" +
-               "  const authToken = document.getElementById('authToken').value;" +
-               "  if (!nodeId) { alert('Please enter a Node ID'); return; }" +
-               "  if (!authToken) { alert('Please enter an Auth Token'); return; }" +
-               "  connect(nodeId, authToken);" +
-               "});" +
-               "disconnectBtn.addEventListener('click', () => { if (ws) ws.close(); });" +
-               "getJwtBtn.addEventListener('click', () => {" +
-               "  const nodeId = document.getElementById('nodeId').value;" +
-               "  if (!nodeId) { alert('Please enter a Node ID'); return; }" +
-               "  fetch('/api/generate-jwt/' + encodeURIComponent(nodeId))" +
-               "    .then(resp => resp.json())" +
-               "    .then(data => {" +
-               "      if (data.token) {" +
-               "        document.getElementById('authToken').value = data.token;" +
-               "        log('JWT generated for ' + nodeId);" +
-               "      } else {" +
-               "        alert('Error: ' + (data.error || 'Unknown error'));" +
-               "      }" +
-               "    })" +
-               "    .catch(err => alert('Failed to fetch JWT: ' + err));" +
-               "});" +
-               "function connect(nodeId, authToken) {" +
-               "  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';" +
-               "  const wsUrl = protocol + '//' + location.host + '/ws?nodeId=' + encodeURIComponent(nodeId) + '&authToken=' + encodeURIComponent(authToken);" +
-               "  log('Connecting to ' + wsUrl);" +
-               "  ws = new WebSocket(wsUrl);" +
-               "  ws.onopen = () => {" +
-               "    log('Connected');" +
-               "    document.getElementById('status').textContent = 'Connected as ' + nodeId;" +
-               "    document.getElementById('status').className = 'status connected';" +
-               "    connectBtn.disabled = true;" +
-               "    disconnectBtn.disabled = false;" +
-               "  };" +
-               "  ws.onmessage = (event) => { log('Received: ' + event.data); };" +
-               "  ws.onclose = () => {" +
-               "    log('Disconnected');" +
-               "    document.getElementById('status').textContent = 'Disconnected';" +
-               "    document.getElementById('status').className = 'status disconnected';" +
-               "    connectBtn.disabled = false;" +
-               "    disconnectBtn.disabled = true;" +
-               "  };" +
-               "  ws.onerror = (error) => { log('Error: ' + error); }" +
-               "}" +
-               "function log(message) {" +
-               "  const logDiv = document.getElementById('log');" +
-               "  const entry = document.createElement('div');" +
-               "  entry.textContent = new Date().toLocaleTimeString() + ': ' + message;" +
-               "  logDiv.prepend(entry);" +
-               "}" +
-               "</script></div></body></html>";
-   }
-
-   private String getNodesPage() {
-       StringBuilder sb = new StringBuilder();
-       sb.append("<!DOCTYPE html><html><head><title>Node Status Dashboard</title>");
-       sb.append("<style>");
-       sb.append("body{font-family:Arial,sans-serif;margin:20px;}");
-       sb.append("table{border-collapse:collapse;width:100%;max-width:800px;}");
-       sb.append("th,td{border:1px solid #ccc;padding:8px;text-align:left;}");
-       sb.append("th{background:#f5f5f5;}");
-       sb.append(".ACTIVE{background:#dff0d8;}");
-       sb.append(".IDLE{background:#fcf8e3;}");
-       sb.append(".disconnected{background:#f2dede;}");
-       sb.append("</style></head><body>");
-       sb.append("<h1>Node Status Dashboard</h1>");
-       sb.append("<table><tr><th>Node ID</th><th>Status</th><th>Last Activity</th></tr>");
-       wsServer.getNodes().forEach((nodeId, info) -> {
-           String status = info.status.toString();
-           String rowClass = status;
-           sb.append("<tr class='").append(rowClass).append("'>");
-           sb.append("<td>").append(nodeId).append("</td>");
-           sb.append("<td>").append(status).append("</td>");
-           sb.append("<td>").append(new java.util.Date(info.lastActivity)).append("</td>");
-           sb.append("</tr>");
-       });
-       sb.append("</table>");
-       sb.append("<p><a href=\"/\">Back to Node Setup</a></p>");
-       sb.append("</body></html>");
-       return sb.toString();
    }
 
    public static void main(String[] args) {
