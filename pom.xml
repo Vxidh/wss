@@ -21,7 +21,12 @@
             <artifactId>Java-WebSocket</artifactId>
             <version>1.5.3</version>
         </dependency>
-
+        <!-- Dot-env-->
+        <dependency>
+            <groupId>io.github.cdimascio</groupId>
+            <artifactId>java-dotenv</artifactId>
+            <version>5.2.2</version>
+        </dependency>
         <!-- Spark Java for HTTP server -->
         <dependency>
             <groupId>com.sparkjava</groupId>
@@ -54,10 +59,28 @@
             <artifactId>slf4j-simple</artifactId>
             <version>2.0.7</version>
         </dependency>
+        <!-- JJWT for JWT handling -->
         <dependency>
             <groupId>com.auth0</groupId>
             <artifactId>java-jwt</artifactId>
-            <version>4.4.0</version>    
+            <version>4.4.0</version> 
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+            <version>0.11.5</version>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+            <version>0.11.5</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId> 
+            <version>0.11.5</version>
+            <scope>runtime</scope>
         </dependency>
     </dependencies>
 
@@ -71,7 +94,7 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>com.example.websocket.HTTPServer</mainClass>
+                            <mainClass>com.example.websocket.MainServer</mainClass>
                         </manifest>
                     </archive>
                     <descriptorRefs>

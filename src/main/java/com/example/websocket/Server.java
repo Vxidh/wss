@@ -4,6 +4,8 @@ import org.java_websocket.server.WebSocketServer;
 import org.java_websocket.WebSocket;
 import org.java_websocket.handshake.ClientHandshake;
 import java.net.InetSocketAddress;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Executors;
@@ -11,55 +13,78 @@ import java.util.concurrent.TimeUnit;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
-// TODO: Replace static token with JWT authentication for production security.
+import io.jsonwebtoken.JwtException;
+
 public class Server extends WebSocketServer {
     private static final long IDLE_TIMEOUT_MS = 30000;
-    private static final String AUTH_SECRET = "cr7";
+
     public enum NodeStatus { ACTIVE, IDLE }
+
     public static class NodeInfo {
         public final WebSocket conn;
         public volatile long lastActivity;
         public volatile NodeStatus status;
+
         public NodeInfo(WebSocket conn) {
             this.conn = conn;
             this.lastActivity = System.currentTimeMillis();
             this.status = NodeStatus.ACTIVE;
         }
+
         public void updateActivity() {
             this.lastActivity = System.currentTimeMillis();
             this.status = NodeStatus.ACTIVE;
         }
+
         public boolean isIdle() {
             return System.currentTimeMillis() - lastActivity > IDLE_TIMEOUT_MS;
         }
     }
+
     private final ConcurrentHashMap<String, NodeInfo> nodes = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+
     public Server(int port) {
         super(new InetSocketAddress(port));
         scheduler.scheduleAtFixedRate(this::checkIdleNodes, 10, 10, TimeUnit.SECONDS);
     }
+
     @Override
     public void onOpen(WebSocket conn, ClientHandshake handshake) {
         System.out.println("Handshake resource: " + handshake.getResourceDescriptor());
         String nodeId = getQueryParam(handshake.getResourceDescriptor(), "nodeId");
         String authToken = getQueryParam(handshake.getResourceDescriptor(), "authToken");
+
         if (nodeId == null || nodeId.isEmpty()) {
             conn.close(1008, "Missing nodeId");
             return;
         }
+
         if (!validateAuthToken(authToken)) {
             conn.close(1008, "Invalid auth token");
             return;
         }
-        nodes.put(nodeId, new NodeInfo(conn));
+
+        NodeInfo oldInfo = nodes.put(nodeId, new NodeInfo(conn));
+        if (oldInfo != null && oldInfo.conn != conn && oldInfo.conn.isOpen()) {
+            oldInfo.conn.close(1000, "Replaced by new connection");
+        }
         System.out.println("Node connected: " + nodeId);
     }
+
     @Override
     public void onClose(WebSocket conn, int code, String reason, boolean remote) {
-        nodes.entrySet().removeIf(entry -> entry.getValue().conn.equals(conn));
-        System.out.println("Node disconnected: " + reason);
+        String disconnectedNodeId = null;
+        for (var entry : nodes.entrySet()) {
+            if (entry.getValue().conn.equals(conn)) {
+                disconnectedNodeId = entry.getKey();
+                nodes.remove(entry.getKey());
+                break;
+            }
+        }
+        System.out.println("Node disconnected: " + (disconnectedNodeId != null ? disconnectedNodeId : reason));
     }
+
     @Override
     public void onMessage(WebSocket conn, String message) {
         JsonObject json;
@@ -69,6 +94,7 @@ public class Server extends WebSocketServer {
             System.out.println("Invalid JSON from client: " + message);
             return;
         }
+
         nodes.forEach((nodeId, info) -> {
             if (info.conn.equals(conn)) {
                 if (json.has("type") && json.get("type").getAsString().equals("ping")) {
@@ -84,14 +110,17 @@ public class Server extends WebSocketServer {
             }
         });
     }
+
     @Override
     public void onError(WebSocket conn, Exception ex) {
         ex.printStackTrace();
     }
+
     @Override
     public void onStart() {
         System.out.println("Server started on port " + getPort());
     }
+
     private void checkIdleNodes() {
         nodes.forEach((nodeId, info) -> {
             if (info.status == NodeStatus.ACTIVE && info.isIdle()) {
@@ -100,6 +129,7 @@ public class Server extends WebSocketServer {
             }
         });
     }
+
     public boolean sendToNode(String nodeId, JsonObject command) {
         NodeInfo info = nodes.get(nodeId);
         if (info != null && info.conn.isOpen() && info.status == NodeStatus.ACTIVE) {
@@ -108,27 +138,46 @@ public class Server extends WebSocketServer {
         }
         return false;
     }
+
+    public boolean disconnectNode(String nodeId) {
+        NodeInfo info = nodes.remove(nodeId);
+        if (info != null && info.conn.isOpen()) {
+            info.conn.close(1000, "Disconnected by server request");
+            System.out.println("Node " + nodeId + " disconnected by server request.");
+            return true;
+        }
+        return false;
+    }
+
     private String getQueryParam(String resource, String key) {
         if (resource == null || !resource.contains("?")) return null;
         String query = resource.substring(resource.indexOf('?') + 1);
         for (String param : query.split("&")) {
-            String[] kv = param.split("=");
+            String[] kv = param.split("=", 2);
             if (kv.length == 2 && kv[0].equals(key)) {
-                return kv[1];
+                return URLDecoder.decode(kv[1], StandardCharsets.UTF_8);
             }
         }
         return null;
     }
+
     private boolean validateAuthToken(String token) {
         if (token == null) return false;
-        return token.equals(AUTH_SECRET);
+        try {
+            JWTUtil.validateToken(token);
+            return true;
+        } catch (JwtException | IllegalStateException e) {
+            System.out.println("JWT validation failed: " + e.getMessage());
+            return false;
+        }
     }
+
     public ConcurrentHashMap<String, NodeInfo> getNodes() {
         return nodes;
     }
+
     public static void main(String[] args) {
-        int port = 8080;
-        Server server = new Server(port);
-        server.start();
+        System.err.println("Please use MainServer.java to start the application (handles config init).");
+        System.exit(1);
     }
 }

@@ -1,0 +1,19 @@
+# Ignore environment files
+.env
+
+# Maven target directory
+target/
+
+# IDE and OS files
+*.iml
+.idea/
+*.log
+.DS_Store
+Thumbs.db
+
+# Ignore compiled classes
+*.class
+
+# Ignore other secrets or config
+*.key
+*.pem
