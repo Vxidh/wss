@@ -142,6 +142,14 @@ public class HTTPServer {
            }
        });
 
+       post("/api/rotate-secret/:nodeId", (req, res) -> {
+           String nodeId = req.params(":nodeId");
+           // Actually rotate the secret and return it
+           String newSecret = wsServer.rotateNodeSecret(nodeId);
+           res.type("application/json");
+           return "{\"status\":\"Secret rotated for node " + nodeId + "\",\"newSecret\":\"" + newSecret + "\"}";
+       });
+
        get("/api/generate-jwt/:nodeId", (req, res) -> {
            String nodeId = req.params(":nodeId");
            if (nodeId == null || nodeId.isEmpty()) {

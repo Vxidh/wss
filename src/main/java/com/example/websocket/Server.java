@@ -12,6 +12,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import java.security.SecureRandom;
+import java.util.Base64;
 
 import io.jsonwebtoken.JwtException;
 
@@ -19,16 +21,21 @@ public class Server extends WebSocketServer {
     private static final long IDLE_TIMEOUT_MS = 30000;
 
     public enum NodeStatus { ACTIVE, IDLE }
+    public enum NodeRole { CONTROLLER, AGENT }
 
     public static class NodeInfo {
         public final WebSocket conn;
         public volatile long lastActivity;
         public volatile NodeStatus status;
+        public final NodeRole role;
+        public final String nodeId;
 
-        public NodeInfo(WebSocket conn) {
+        public NodeInfo(WebSocket conn, NodeRole role, String nodeId) {
             this.conn = conn;
             this.lastActivity = System.currentTimeMillis();
             this.status = NodeStatus.ACTIVE;
+            this.role = role;
+            this.nodeId = nodeId;
         }
 
         public void updateActivity() {
@@ -42,6 +49,8 @@ public class Server extends WebSocketServer {
     }
 
     private final ConcurrentHashMap<String, NodeInfo> nodes = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<WebSocket, NodeInfo> connToNode = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, String> nodeSecrets = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
     public Server(int port) {
@@ -54,39 +63,57 @@ public class Server extends WebSocketServer {
         System.out.println("Handshake resource: " + handshake.getResourceDescriptor());
         String nodeId = getQueryParam(handshake.getResourceDescriptor(), "nodeId");
         String authToken = getQueryParam(handshake.getResourceDescriptor(), "authToken");
+        String roleParam = getQueryParam(handshake.getResourceDescriptor(), "role");
+        NodeRole role = NodeRole.AGENT;
+        if (roleParam != null && roleParam.equalsIgnoreCase("controller")) {
+            role = NodeRole.CONTROLLER;
+        }
 
         if (nodeId == null || nodeId.isEmpty()) {
             conn.close(1008, "Missing nodeId");
             return;
         }
 
-        if (!validateAuthToken(authToken)) {
-            conn.close(1008, "Invalid auth token");
+        // Use JWT validation for controllers, agent secret validation for agents
+        boolean valid;
+        if (role == NodeRole.CONTROLLER) {
+            valid = validateAuthToken(authToken);
+        } else {
+            valid = validateAgentSecret(nodeId, authToken);
+        }
+        if (!valid) {
+            conn.close(1008, "Invalid or missing auth token/secret");
+            System.out.println("Rejected connection for nodeId=" + nodeId + ": invalid token/secret");
             return;
         }
 
-        NodeInfo oldInfo = nodes.put(nodeId, new NodeInfo(conn));
+        NodeInfo nodeInfo = new NodeInfo(conn, role, nodeId);
+        NodeInfo oldInfo = nodes.put(nodeId, nodeInfo);
+        connToNode.put(conn, nodeInfo);
         if (oldInfo != null && oldInfo.conn != conn && oldInfo.conn.isOpen()) {
             oldInfo.conn.close(1000, "Replaced by new connection");
         }
-        System.out.println("Node connected: " + nodeId);
+        System.out.println("Node connected: " + nodeId + " as " + role);
     }
 
     @Override
     public void onClose(WebSocket conn, int code, String reason, boolean remote) {
-        String disconnectedNodeId = null;
-        for (var entry : nodes.entrySet()) {
-            if (entry.getValue().conn.equals(conn)) {
-                disconnectedNodeId = entry.getKey();
-                nodes.remove(entry.getKey());
-                break;
-            }
+        NodeInfo info = connToNode.remove(conn);
+        if (info != null) {
+            nodes.remove(info.nodeId);
+            System.out.println("Node disconnected: " + info.nodeId + " (" + info.role + ")");
+        } else {
+            System.out.println("Node disconnected: " + reason);
         }
-        System.out.println("Node disconnected: " + (disconnectedNodeId != null ? disconnectedNodeId : reason));
     }
 
     @Override
     public void onMessage(WebSocket conn, String message) {
+        NodeInfo sender = connToNode.get(conn);
+        if (sender == null) {
+            System.out.println("Unknown sender");
+            return;
+        }
         JsonObject json;
         try {
             json = JsonParser.parseString(message).getAsJsonObject();
@@ -94,21 +121,30 @@ public class Server extends WebSocketServer {
             System.out.println("Invalid JSON from client: " + message);
             return;
         }
-
-        nodes.forEach((nodeId, info) -> {
-            if (info.conn.equals(conn)) {
-                if (json.has("type") && json.get("type").getAsString().equals("ping")) {
-                    info.updateActivity();
-                    JsonObject pong = new JsonObject();
-                    pong.addProperty("type", "pong");
-                    conn.send(pong.toString());
-                    System.out.println("Ping received from " + nodeId + ", sent pong.");
-                } else {
-                    info.updateActivity();
-                    System.out.println("Received from " + nodeId + ": " + message);
-                }
+        sender.updateActivity();
+        if (json.has("type") && json.get("type").getAsString().equals("ping")) {
+            JsonObject pong = new JsonObject();
+            pong.addProperty("type", "pong");
+            conn.send(pong.toString());
+            System.out.println("Ping received from " + sender.nodeId + ", sent pong.");
+            return;
+        }
+        // Only controllers can send actionable commands
+        if (sender.role == NodeRole.CONTROLLER && json.has("targetNodeId")) {
+            String targetNodeId = json.get("targetNodeId").getAsString();
+            NodeInfo target = nodes.get(targetNodeId);
+            if (target != null && target.role == NodeRole.AGENT && target.conn.isOpen()) {
+                target.conn.send(json.toString());
+                System.out.println("Forwarded command from controller " + sender.nodeId + " to agent " + targetNodeId);
+            } else {
+                System.out.println("Target agent not found or not available: " + targetNodeId);
             }
-        });
+        } else if (sender.role == NodeRole.AGENT) {
+            // Handle agent responses or events here if needed
+            System.out.println("Received from agent " + sender.nodeId + ": " + message);
+        } else {
+            System.out.println("Unauthorized or malformed command from " + sender.nodeId);
+        }
     }
 
     @Override
@@ -170,6 +206,39 @@ public class Server extends WebSocketServer {
             System.out.println("JWT validation failed: " + e.getMessage());
             return false;
         }
+    }
+
+    private boolean validateAgentSecret(String nodeId, String token) {
+        if (nodeId == null || token == null) return false;
+        String expected = nodeSecrets.get(nodeId);
+        return expected != null && expected.equals(token);
+    }
+
+    public String rotateNodeSecret(String nodeId) {
+        String newSecret = generateSecret();
+        nodeSecrets.put(nodeId, newSecret);
+        System.out.println("Secret rotated for nodeId=" + nodeId);
+        NodeInfo info = nodes.get(nodeId);
+        if (info != null && info.conn.isOpen()) {
+            JsonObject cmd = new JsonObject();
+            cmd.addProperty("type", "rotate_secret");
+            info.conn.send(cmd.toString());
+        }
+        return newSecret;
+    }
+
+    public void setNodeSecret(String nodeId, String secret) {
+        nodeSecrets.put(nodeId, secret);
+    }
+
+    private String generateSecret() {
+        byte[] bytes = new byte[32];
+        new SecureRandom().nextBytes(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
+    public String getNodeSecret(String nodeId) {
+        return nodeSecrets.get(nodeId);
     }
 
     public ConcurrentHashMap<String, NodeInfo> getNodes() {

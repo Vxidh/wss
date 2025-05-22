@@ -24,6 +24,7 @@ public class MainServer {
         int httpPort = 4567;
 
         Server wsServer = new Server(wsPort);
+        wsServer.setNodeSecret("AGENT001", "bd0acd7235c524ba11834ec79dfa5a5738190276c4522f38d96e31f2cd2de522");
         HTTPServer httpServer = new HTTPServer(wsServer);
 
         Thread wsThread = new Thread(() -> {

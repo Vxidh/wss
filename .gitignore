@@ -1,19 +1,24 @@
 # Ignore environment files
 .env
 
-# Maven target directory
-target/
+# Ignore build output
+/target/
+*.class
 
-# IDE and OS files
-*.iml
+# Ignore IDE/project files
 .idea/
+*.iml
+
+# Ignore logs
 *.log
+
+# Ignore OS files
 .DS_Store
 Thumbs.db
-
-# Ignore compiled classes
-*.class
 
 # Ignore other secrets or config
 *.key
 *.pem
+
+# Ignore node_modules in electron-agent
+electron-agent/node_modules/
