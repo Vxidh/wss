@@ -42,6 +42,13 @@
     const disconnectBtn = document.getElementById('disconnectBtn');
     const getJwtBtn = document.getElementById('getJwtBtn');
     let ws = null;
+    let wsInfo = null;
+
+    // Fetch WebSocket host/port info on page load
+    fetch('/api/ws-info')
+        .then(resp => resp.json())
+        .then(info => { wsInfo = info; })
+        .catch(() => { wsInfo = { host: 'localhost', port: 4567 }; });
 
     connectBtn.addEventListener('click', () => {
         const nodeId = document.getElementById('nodeId').value;
@@ -70,8 +77,12 @@
     });
 
     function connect(nodeId, authToken) {
+        // Use wsInfo to construct the correct WebSocket URL
         const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = protocol + '//' + location.host + '/ws?nodeId=' + encodeURIComponent(nodeId) + '&authToken=' + encodeURIComponent(authToken);
+        const host = wsInfo && wsInfo.host ? wsInfo.host : 'localhost';
+        const port = wsInfo && wsInfo.port ? wsInfo.port : 4567;
+        // Use "/" as path, not "/ws"
+        const wsUrl = protocol + '//' + host + ':' + port + '/?nodeId=' + encodeURIComponent(nodeId) + '&authToken=' + encodeURIComponent(authToken) + '&role=controller';
         log('Connecting to ' + wsUrl);
         ws = new WebSocket(wsUrl);
         ws.onopen = () => {

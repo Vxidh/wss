@@ -4,6 +4,7 @@ const screenshot = require('screenshot-desktop');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const axios = require('axios'); // npm install axios
 
 // --- CONFIG ---
 const NODE_ID_FILE = path.join(app.getPath('userData'), 'agent-nodeid.txt');
@@ -54,7 +55,7 @@ function rotateSecret() {
 }
 
 function getServerUrl() {
-  return `ws://localhost:8080/?nodeId=${encodeURIComponent(NODE_ID)}&authToken=${encodeURIComponent(agentSecret)}&role=agent`;
+  return `ws://localhost:4567/?nodeId=${encodeURIComponent(NODE_ID)}&authToken=${encodeURIComponent(agentSecret)}&role=agent`;
 }
 
 function createTray() {
@@ -106,13 +107,38 @@ function connectWebSocket() {
   });
 }
 
-app.whenReady().then(() => {
+async function registerAgent() {
+  try {
+    const resp = await axios.post('http://localhost:8080/api/register-agent', {
+      nodeId: NODE_ID,
+      secret: agentSecret,
+      registrationToken: 'super-secret-token-123'
+    });
+    if (resp.data.status === 'registered') {
+      console.log('Agent registered successfully.');
+      return true;
+    } else {
+      console.error('Agent registration failed:', resp.data);
+      return false;
+    }
+  } catch (e) {
+    console.error('Agent registration error:', e.message);
+    return false;
+  }
+}
+
+app.whenReady().then(async () => {
   getOrCreateSecret();
+  const registrationResult = await registerAgent();
   // Print nodeId and secret for backend registration
   console.log(`Agent nodeId: ${NODE_ID}`);
   console.log(`Agent secret: ${agentSecret}`);
   createTray();
-  connectWebSocket();
+  if (registrationResult === true) {
+    connectWebSocket();
+  } else {
+    console.error('Agent registration failed, not connecting WebSocket.');
+  }
   // No window shown
 });
 

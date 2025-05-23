@@ -20,8 +20,8 @@ public class MainServer {
 
         Config.init(jwtSecret);
 
-        int wsPort = 8080;
-        int httpPort = 4567;
+        int wsPort = 4567;   // WebSocket on 4567
+        int httpPort = 8080; // HTTP API on 8080
 
         Server wsServer = new Server(wsPort);
         wsServer.setNodeSecret("AGENT001", "bd0acd7235c524ba11834ec79dfa5a5738190276c4522f38d96e31f2cd2de522");

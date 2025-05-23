@@ -9,8 +9,9 @@
     "start": "electron ."
   },
   "dependencies": {
-    "ws": "^8.16.0",
-    "screenshot-desktop": "^1.14.0"
+    "axios": "^1.9.0",
+    "screenshot-desktop": "^1.14.0",
+    "ws": "^8.16.0"
   },
   "devDependencies": {
     "electron": "^29.0.0"

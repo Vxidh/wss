@@ -12,8 +12,14 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 import java.security.SecureRandom;
 import java.util.Base64;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.FileReader;
+import java.io.IOException;
 
 import io.jsonwebtoken.JwtException;
 
@@ -52,14 +58,19 @@ public class Server extends WebSocketServer {
     private final ConcurrentHashMap<WebSocket, NodeInfo> connToNode = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, String> nodeSecrets = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+    private final String secretsFile = "agent-secrets.json"; // Store in working directory
+    private final Gson gson = new Gson();
 
     public Server(int port) {
         super(new InetSocketAddress(port));
+        System.out.println("[DEBUG] WebSocketServer constructor: Listening on port " + port);
+        loadNodeSecrets();
         scheduler.scheduleAtFixedRate(this::checkIdleNodes, 10, 10, TimeUnit.SECONDS);
     }
 
     @Override
     public void onOpen(WebSocket conn, ClientHandshake handshake) {
+        System.out.println("[DEBUG] onOpen: New WebSocket connection attempt");
         System.out.println("Handshake resource: " + handshake.getResourceDescriptor());
         String nodeId = getQueryParam(handshake.getResourceDescriptor(), "nodeId");
         String authToken = getQueryParam(handshake.getResourceDescriptor(), "authToken");
@@ -149,12 +160,14 @@ public class Server extends WebSocketServer {
 
     @Override
     public void onError(WebSocket conn, Exception ex) {
+        System.err.println("[DEBUG] onError: WebSocket error occurred");
         ex.printStackTrace();
     }
 
     @Override
     public void onStart() {
-        System.out.println("Server started on port " + getPort());
+        System.out.println("[DEBUG] WebSocket server started on port " + getPort());
+        System.out.println("[DEBUG] Accepting connections at ws://localhost:" + getPort() + "/");
     }
 
     private void checkIdleNodes() {
@@ -209,14 +222,15 @@ public class Server extends WebSocketServer {
     }
 
     private boolean validateAgentSecret(String nodeId, String token) {
-        if (nodeId == null || token == null) return false;
         String expected = nodeSecrets.get(nodeId);
+        System.out.println("Validating nodeId=" + nodeId + ", provided=" + token + ", expected=" + expected);
         return expected != null && expected.equals(token);
     }
 
     public String rotateNodeSecret(String nodeId) {
         String newSecret = generateSecret();
         nodeSecrets.put(nodeId, newSecret);
+        saveNodeSecrets();
         System.out.println("Secret rotated for nodeId=" + nodeId);
         NodeInfo info = nodes.get(nodeId);
         if (info != null && info.conn.isOpen()) {
@@ -228,7 +242,31 @@ public class Server extends WebSocketServer {
     }
 
     public void setNodeSecret(String nodeId, String secret) {
+        System.out.println("Registering nodeId=" + nodeId + " with secret=" + secret);
         nodeSecrets.put(nodeId, secret);
+        saveNodeSecrets();
+    }
+
+    private void saveNodeSecrets() {
+        try (FileWriter writer = new FileWriter(secretsFile)) {
+            gson.toJson(nodeSecrets, writer);
+        } catch (IOException e) {
+            System.err.println("Failed to save agent secrets: " + e.getMessage());
+        }
+    }
+
+    private void loadNodeSecrets() {
+        File file = new File(secretsFile);
+        if (!file.exists()) return;
+        try (FileReader reader = new FileReader(file)) {
+            ConcurrentHashMap<String, String> loaded = gson.fromJson(reader,
+                new TypeToken<ConcurrentHashMap<String, String>>(){}.getType());
+            if (loaded != null) {
+                nodeSecrets.putAll(loaded);
+            }
+        } catch (IOException e) {
+            System.err.println("Failed to load agent secrets: " + e.getMessage());
+        }
     }
 
     private String generateSecret() {
