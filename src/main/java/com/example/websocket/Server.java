@@ -25,6 +25,7 @@ import io.jsonwebtoken.JwtException;
 
 public class Server extends WebSocketServer {
     private static final long IDLE_TIMEOUT_MS = 30000;
+    private static final long MAX_IDLE_DISCONNECT_MS = 300000; // 5 minutes
 
     public enum NodeStatus { ACTIVE, IDLE }
     public enum NodeRole { CONTROLLER, AGENT }
@@ -171,17 +172,31 @@ public class Server extends WebSocketServer {
     }
 
     private void checkIdleNodes() {
+        long now = System.currentTimeMillis();
         nodes.forEach((nodeId, info) -> {
             if (info.status == NodeStatus.ACTIVE && info.isIdle()) {
                 info.status = NodeStatus.IDLE;
                 System.out.println("Node " + nodeId + " marked as IDLE");
+            }
+            // Disconnect if idle for more than 5 minutes
+            if (info.status == NodeStatus.IDLE && (now - info.lastActivity > MAX_IDLE_DISCONNECT_MS)) {
+                System.out.println("Node " + nodeId + " has been idle for over 5 minutes. Disconnecting...");
+                try {
+                    info.conn.close(4000, "Disconnected due to inactivity > 5 minutes");
+                } catch (Exception e) {
+                    System.err.println("Error disconnecting idle node " + nodeId + ": " + e.getMessage());
+                }
+                nodes.remove(nodeId);
+                connToNode.remove(info.conn);
             }
         });
     }
 
     public boolean sendToNode(String nodeId, JsonObject command) {
         NodeInfo info = nodes.get(nodeId);
-        if (info != null && info.conn.isOpen() && info.status == NodeStatus.ACTIVE) {
+        if (info != null && info.conn.isOpen()) {
+            // Mark node as ACTIVE and update lastActivity when sending a command
+            info.updateActivity();
             info.conn.send(command.toString());
             return true;
         }

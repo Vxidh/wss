@@ -5,8 +5,9 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const axios = require('axios'); // npm install axios
+const winston = require('winston');
 
-// --- CONFIG ---
+
 const NODE_ID_FILE = path.join(app.getPath('userData'), 'agent-nodeid.txt');
 
 function getOrCreateNodeId() {
@@ -19,9 +20,9 @@ function getOrCreateNodeId() {
   }
 }
 
-const NODE_ID = getOrCreateNodeId(); // Optionally make this unique per machine
+const NODE_ID = getOrCreateNodeId(); 
 const SECRET_FILE = path.join(app.getPath('userData'), 'agent-secret.txt');
-const TRAY_ICON = path.join(__dirname, 'icon.png'); // Use a small, neutral icon
+const TRAY_ICON = path.join(__dirname, 'icon.png'); 
 
 let tray = null;
 let ws = null;
@@ -30,11 +31,10 @@ let agentSecret = null;
 function getOrCreateSecret() {
   if (fs.existsSync(SECRET_FILE)) {
     agentSecret = fs.readFileSync(SECRET_FILE, 'utf8').trim();
-    // Ensure file permissions are strict (owner read/write only)
     try {
       fs.chmodSync(SECRET_FILE, 0o600);
     } catch (e) {
-      console.warn('Could not set secret file permissions:', e);
+      logger.warn('Could not set secret file permissions:', e);
     }
   } else {
     agentSecret = crypto.randomBytes(32).toString('hex');
@@ -42,13 +42,11 @@ function getOrCreateSecret() {
   }
 }
 
-// Rotate the agent secret securely
 function rotateSecret() {
   const oldSecret = agentSecret;
   agentSecret = crypto.randomBytes(32).toString('hex');
   fs.writeFileSync(SECRET_FILE, agentSecret, { encoding: 'utf8', mode: 0o600 });
-  console.log('Agent secret rotated.');
-  // Reconnect with new secret
+  logger.info('Agent secret rotated.');
   if (ws) {
     ws.close();
   }
@@ -73,8 +71,7 @@ function connectWebSocket() {
   ws = new WebSocket(SERVER_URL);
 
   ws.on('open', () => {
-    console.log('Connected to backend');
-    // Optionally send a hello/ping
+    logger.info('Connected to backend');
   });
 
   ws.on('message', async (data) => {
@@ -94,7 +91,7 @@ function connectWebSocket() {
       }
       // Add more command handlers here (mouse, etc)
     } catch (e) {
-      console.error('Error handling message:', e);
+      logger.error('Error handling message:', e);
     }
   });
 
@@ -103,7 +100,7 @@ function connectWebSocket() {
   });
 
   ws.on('error', (err) => {
-    console.error('WebSocket error:', err);
+    logger.error('WebSocket error:', err);
   });
 }
 
@@ -115,29 +112,42 @@ async function registerAgent() {
       registrationToken: 'super-secret-token-123'
     });
     if (resp.data.status === 'registered') {
-      console.log('Agent registered successfully.');
+      logger.info('Agent registered successfully.');
       return true;
     } else {
-      console.error('Agent registration failed:', resp.data);
+      logger.error('Agent registration failed: ' + JSON.stringify(resp.data));
       return false;
     }
   } catch (e) {
-    console.error('Agent registration error:', e.message);
+    logger.error('Agent registration error: ' + e.message);
     return false;
   }
 }
+
+// 2. Configure winston logger
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+    winston.format.printf(({ timestamp, level, message }) => `${timestamp} [${level.toUpperCase()}] ${message}`)
+  ),
+  transports: [
+    new winston.transports.Console(),
+    new winston.transports.File({ filename: 'agent.log', maxsize: 1048576, maxFiles: 3 })
+  ]
+});
 
 app.whenReady().then(async () => {
   getOrCreateSecret();
   const registrationResult = await registerAgent();
   // Print nodeId and secret for backend registration
-  console.log(`Agent nodeId: ${NODE_ID}`);
-  console.log(`Agent secret: ${agentSecret}`);
+  logger.info(`Agent nodeId: ${NODE_ID}`);
+  logger.info(`Agent secret: ${agentSecret}`);
   createTray();
   if (registrationResult === true) {
     connectWebSocket();
   } else {
-    console.error('Agent registration failed, not connecting WebSocket.');
+    logger.error('Agent registration failed, not connecting WebSocket.');
   }
   // No window shown
 });

@@ -77,11 +77,9 @@
     });
 
     function connect(nodeId, authToken) {
-        // Use wsInfo to construct the correct WebSocket URL
         const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
         const host = wsInfo && wsInfo.host ? wsInfo.host : 'localhost';
         const port = wsInfo && wsInfo.port ? wsInfo.port : 4567;
-        // Use "/" as path, not "/ws"
         const wsUrl = protocol + '//' + host + ':' + port + '/?nodeId=' + encodeURIComponent(nodeId) + '&authToken=' + encodeURIComponent(authToken) + '&role=controller';
         log('Connecting to ' + wsUrl);
         ws = new WebSocket(wsUrl);
@@ -92,7 +90,20 @@
             connectBtn.disabled = true;
             disconnectBtn.disabled = false;
         };
-        ws.onmessage = (event) => { log('Received: ' + event.data); };
+        ws.onmessage = (event) => {
+            log('Received: ' + event.data);
+            try {
+                const msg = JSON.parse(event.data);
+                if (msg.type === 'screenshot_result' && msg.image) {
+                    const img = document.createElement('img');
+                    img.src = 'data:image/png;base64,' + msg.image;
+                    img.style.maxWidth = '400px';
+                    img.style.display = 'block';
+                    logDiv.prepend(img);
+                }
+            } catch (e) {
+            }
+        };
         ws.onclose = () => {
             log('Disconnected');
             document.getElementById('status').textContent = 'Disconnected';

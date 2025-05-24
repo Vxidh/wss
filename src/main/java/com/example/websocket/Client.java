@@ -7,8 +7,12 @@ import java.awt.*;
 import java.awt.event.KeyEvent;
 import java.net.URI;
 import java.awt.event.InputEvent;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 
 public class Client extends WebSocketClient {
+    private static final Logger logger = LoggerFactory.getLogger(Client.class);
     private Robot robot;
     public Client(URI serverUri) throws AWTException {
         super(serverUri);
@@ -16,12 +20,13 @@ public class Client extends WebSocketClient {
     }
     @Override
     public void onOpen(ServerHandshake handshakedata) {
-        System.out.println("Connected to server");
+        MDC.put("correlationId", java.util.UUID.randomUUID().toString());
+        logger.info("Connected to server");
         sendPing();
     }
     @Override
     public void onMessage(String message) {
-        System.out.println("Received: " + message);
+        logger.info("Received: {}", message);
         try {
             JSONObject json = new JSONObject(message);
             String type = json.getString("type");
@@ -49,17 +54,17 @@ public class Client extends WebSocketClient {
                     send("{\"type\":\"pong\"}");
                     break;
                 default:
-                    System.out.println("Unknown command type: " + type);
+                    logger.warn("Unknown command type: {}", type);
             }
         } catch (Exception e) {
-            System.err.println("Failed to process message: " + e.getMessage());
+            logger.error("Failed to process message", e);
         }
     }
     private void typeChar(char c) {
         try {
             int keyCode = KeyEvent.getExtendedKeyCodeForChar(c);
             if (keyCode == KeyEvent.VK_UNDEFINED) {
-                System.err.println("Cannot type character: " + c);
+                logger.warn("Cannot type character: {}", c);
                 return;
             }
             boolean shiftNeeded = Character.isUpperCase(c) || isSpecialShiftChar(c);
@@ -68,7 +73,7 @@ public class Client extends WebSocketClient {
             robot.keyRelease(keyCode);
             if (shiftNeeded) robot.keyRelease(KeyEvent.VK_SHIFT);
         } catch (Exception e) {
-            System.err.println("Could not type character: " + c);
+            logger.error("Could not type character: {}", c, e);
         }
     }
     private boolean isSpecialShiftChar(char c) {
@@ -80,26 +85,26 @@ public class Client extends WebSocketClient {
     }
     @Override
     public void onClose(int code, String reason, boolean remote) {
-        System.out.println("Connection closed: " + reason);
+        logger.info("Connection closed: {}", reason);
         new Thread(() -> {
             try {
                 Thread.sleep(5000);
-                System.out.println("Attempting to reconnect...");
+                logger.info("Attempting to reconnect...");
                 reconnect();
             } catch (Exception e) {
-                System.err.println("Failed to reconnect: " + e.getMessage());
+                logger.error("Failed to reconnect", e);
             }
         }).start();
     }
     @Override
     public void onError(Exception ex) {
-        System.err.println("WebSocket error:");
-        ex.printStackTrace();
+        logger.error("WebSocket error", ex);
     }
     public static void main(String[] args) throws Exception {
         String nodeId = args.length > 0 ? args[0] : "node-" + System.currentTimeMillis();
         String host = args.length > 1 ? args[1] : "localhost:8080";
         URI serverUri = new URI("ws://" + host + "/ws?nodeId=" + nodeId);
+        MDC.put("correlationId", nodeId);
         Client client = new Client(serverUri);
         client.connectBlocking();
         while (client.isOpen()) {

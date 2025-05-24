@@ -6,7 +6,18 @@
   "author": "",
   "license": "MIT",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "build": "electron-builder --win --x64"
+  },
+  "build": {
+    "appId": "com.example.electronagent",
+    "productName": "ElectronAgent",
+    "win": {
+      "target": "nsis"
+    },
+    "files": [
+      "**/*"
+    ]
   },
   "dependencies": {
     "axios": "^1.9.0",
@@ -14,6 +25,7 @@
     "ws": "^8.16.0"
   },
   "devDependencies": {
-    "electron": "^29.0.0"
+    "electron": "^29.0.0",
+    "electron-builder": "^24.13.3"
   }
 }
