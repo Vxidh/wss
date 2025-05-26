@@ -13,7 +13,7 @@
 ```mermaid
 flowchart TD
     subgraph User Device
-        A[Electron Agent<br>(Tray App)]
+        A[Electron Agent (Tray App)]
     end
     subgraph Backend
         B[WebSocket/HTTP Server]

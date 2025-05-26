@@ -18,7 +18,6 @@ public class HTTPServer {
 
     public void start(int port) {
         port(port);
-        // Serve static files from /public directory
         staticFiles.location("/public");
         configureCORS();
         configureRoutes();
@@ -46,7 +45,6 @@ public class HTTPServer {
             res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
         });
 
-        // No authentication required
     }
 
     private void configureRoutes() {
@@ -120,12 +118,8 @@ public class HTTPServer {
             return "{\"status\":\"Secret rotated for node " + nodeId + "\",\"newSecret\":\"" + newSecret + "\"}";
         });
 
-        // Remove /api/generate-jwt endpoint
-
-        // Serve static HTML for "/" and "/nodes"
         get("/", (req, res) -> {
             res.type("text/html");
-            // Serve index.html from /public
             return renderStaticHtml("index.html");
         });
 
