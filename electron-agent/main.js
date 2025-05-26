@@ -19,7 +19,6 @@ function getOrCreateNodeId() {
 }
 
 const NODE_ID = getOrCreateNodeId();
-const TRAY_ICON = path.join(__dirname, 'icon.png');
 
 let tray = null;
 let ws = null;
@@ -36,8 +35,7 @@ function updateTrayMenu() {
 }
 
 function createTray() {
-  const icon = nativeImage.createFromPath(TRAY_ICON);
-  tray = new Tray(icon);
+  tray = new Tray(nativeImage.createEmpty());
   tray.setToolTip('System Agent');
   updateTrayMenu();
 }
@@ -98,3 +96,5 @@ app.whenReady().then(() => {
 app.on('window-all-closed', (e) => {
   e.preventDefault(); // Prevent app from quitting
 });
+
+// No changes needed for packaging
