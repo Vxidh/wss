@@ -88,7 +88,6 @@ function connectWebSocket() {
 }
 
 app.whenReady().then(() => {
-  // Print nodeId for backend registration
   console.log(`Agent nodeId: ${NODE_ID}`);
   createTray();
   connectWebSocket();

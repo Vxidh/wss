@@ -43,12 +43,8 @@
             <label for="nodeId">Node ID: </label>
             <input type="text" id="nodeId" value="node-<span id='ts'></span>">
         </div>
-        <div>
-            <label for="authToken">Agent Secret: </label>
-            <input type="text" id="authToken" placeholder="Enter your agent secret">
-        </div>
         <div style="margin:10px 0;color:#888;font-size:0.95em">
-            Enter your agent secret to connect.
+            Enter a Node ID to connect.
         </div>
         <div>
             <button id="connectBtn">Connect Node</button>
@@ -67,17 +63,15 @@
 
         connectBtn.addEventListener('click', () => {
             const nodeId = document.getElementById('nodeId').value;
-            const authToken = document.getElementById('authToken').value;
             if (!nodeId) { alert('Please enter a Node ID'); return; }
-            if (!authToken) { alert('Please enter an Agent Secret'); return; }
-            connect(nodeId, authToken);
+            connect(nodeId);
         });
 
         disconnectBtn.addEventListener('click', () => { if (ws) ws.close(); });
 
-        function connect(nodeId, authToken) {
+        function connect(nodeId) {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = protocol + '//' + location.host + '/ws?nodeId=' + encodeURIComponent(nodeId) + '&authToken=' + encodeURIComponent(authToken);
+            const wsUrl = protocol + '//' + location.host + '/ws?nodeId=' + encodeURIComponent(nodeId);
             log('Connecting to ' + wsUrl);
             ws = new WebSocket(wsUrl);
             ws.onopen = () => {
