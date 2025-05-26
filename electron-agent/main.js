@@ -12,59 +12,39 @@ function getOrCreateNodeId() {
   if (fs.existsSync(NODE_ID_FILE)) {
     return fs.readFileSync(NODE_ID_FILE, 'utf8').trim();
   } else {
-    const uuid = crypto.randomUUID();
+    const uuid = 'node-' + crypto.randomUUID();
     fs.writeFileSync(NODE_ID_FILE, uuid, { encoding: 'utf8', mode: 0o600 });
     return uuid;
   }
 }
 
-const NODE_ID = getOrCreateNodeId(); // Optionally make this unique per machine
-const SECRET_FILE = path.join(app.getPath('userData'), 'agent-secret.txt');
-const TRAY_ICON = path.join(__dirname, 'icon.png'); // Use a small, neutral icon
+const NODE_ID = getOrCreateNodeId();
+const TRAY_ICON = path.join(__dirname, 'icon.png');
 
 let tray = null;
 let ws = null;
-let agentSecret = null;
+let connected = false;
 
-function getOrCreateSecret() {
-  if (fs.existsSync(SECRET_FILE)) {
-    agentSecret = fs.readFileSync(SECRET_FILE, 'utf8').trim();
-    // Ensure file permissions are strict (owner read/write only)
-    try {
-      fs.chmodSync(SECRET_FILE, 0o600);
-    } catch (e) {
-      console.warn('Could not set secret file permissions:', e);
-    }
-  } else {
-    agentSecret = crypto.randomBytes(32).toString('hex');
-    fs.writeFileSync(SECRET_FILE, agentSecret, { encoding: 'utf8', mode: 0o600 });
-  }
-}
-
-// Rotate the agent secret securely
-function rotateSecret() {
-  const oldSecret = agentSecret;
-  agentSecret = crypto.randomBytes(32).toString('hex');
-  fs.writeFileSync(SECRET_FILE, agentSecret, { encoding: 'utf8', mode: 0o600 });
-  console.log('Agent secret rotated.');
-  // Reconnect with new secret
-  if (ws) {
-    ws.close();
-  }
-}
-
-function getServerUrl() {
-  return `ws://localhost:8080/?nodeId=${encodeURIComponent(NODE_ID)}&authToken=${encodeURIComponent(agentSecret)}&role=agent`;
+function updateTrayMenu() {
+  const statusLabel = connected ? 'Status: Connected' : 'Status: Disconnected';
+  const contextMenu = Menu.buildFromTemplate([
+    { label: statusLabel, enabled: false },
+    { type: 'separator' },
+    { label: 'Quit', click: () => app.quit() }
+  ]);
+  tray.setContextMenu(contextMenu);
 }
 
 function createTray() {
   const icon = nativeImage.createFromPath(TRAY_ICON);
   tray = new Tray(icon);
-  const contextMenu = Menu.buildFromTemplate([
-    { label: 'Quit', click: () => app.quit() }
-  ]);
   tray.setToolTip('System Agent');
-  tray.setContextMenu(contextMenu);
+  updateTrayMenu();
+}
+
+function getServerUrl() {
+  // No authToken/secret
+  return `ws://localhost:8080/ws?nodeId=${encodeURIComponent(NODE_ID)}&role=agent`;
 }
 
 function connectWebSocket() {
@@ -72,8 +52,21 @@ function connectWebSocket() {
   ws = new WebSocket(SERVER_URL);
 
   ws.on('open', () => {
+    connected = true;
+    updateTrayMenu();
     console.log('Connected to backend');
-    // Optionally send a hello/ping
+  });
+
+  ws.on('close', () => {
+    connected = false;
+    updateTrayMenu();
+    setTimeout(connectWebSocket, 5000); // Reconnect after delay
+  });
+
+  ws.on('error', (err) => {
+    connected = false;
+    updateTrayMenu();
+    console.error('WebSocket error:', err);
   });
 
   ws.on('message', async (data) => {
@@ -87,33 +80,20 @@ function connectWebSocket() {
           image: img.toString('base64')
         }));
       }
-      // Secret rotation command from backend
-      else if (msg.type === 'rotate_secret') {
-        rotateSecret();
-      }
-      // Add more command handlers here (mouse, etc)
+      // ...other handlers...
     } catch (e) {
       console.error('Error handling message:', e);
     }
   });
-
-  ws.on('close', () => {
-    setTimeout(connectWebSocket, 5000); // Reconnect after delay
-  });
-
-  ws.on('error', (err) => {
-    console.error('WebSocket error:', err);
-  });
 }
 
 app.whenReady().then(() => {
-  getOrCreateSecret();
-  // Print nodeId and secret for backend registration
+  // Print nodeId for backend registration
   console.log(`Agent nodeId: ${NODE_ID}`);
-  console.log(`Agent secret: ${agentSecret}`);
   createTray();
   connectWebSocket();
-  // No window shown
+  // No window shown, no dock/taskbar icon
+  if (app.dock) app.dock.hide(); // macOS: hide dock icon
 });
 
 app.on('window-all-closed', (e) => {

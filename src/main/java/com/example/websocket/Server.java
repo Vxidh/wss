@@ -15,13 +15,16 @@ import com.google.gson.JsonParser;
 import java.security.SecureRandom;
 import java.util.Base64;
 
-import io.jsonwebtoken.JwtException;
-
 public class Server extends WebSocketServer {
     private static final long IDLE_TIMEOUT_MS = 30000;
 
-    public enum NodeStatus { ACTIVE, IDLE }
-    public enum NodeRole { CONTROLLER, AGENT }
+    public enum NodeStatus {
+        ACTIVE, IDLE
+    }
+
+    public enum NodeRole {
+        CONTROLLER, AGENT
+    }
 
     public static class NodeInfo {
         public final WebSocket conn;
@@ -50,7 +53,6 @@ public class Server extends WebSocketServer {
 
     private final ConcurrentHashMap<String, NodeInfo> nodes = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<WebSocket, NodeInfo> connToNode = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, String> nodeSecrets = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
     public Server(int port) {
@@ -62,7 +64,6 @@ public class Server extends WebSocketServer {
     public void onOpen(WebSocket conn, ClientHandshake handshake) {
         System.out.println("Handshake resource: " + handshake.getResourceDescriptor());
         String nodeId = getQueryParam(handshake.getResourceDescriptor(), "nodeId");
-        String authToken = getQueryParam(handshake.getResourceDescriptor(), "authToken");
         String roleParam = getQueryParam(handshake.getResourceDescriptor(), "role");
         NodeRole role = NodeRole.AGENT;
         if (roleParam != null && roleParam.equalsIgnoreCase("controller")) {
@@ -74,19 +75,7 @@ public class Server extends WebSocketServer {
             return;
         }
 
-        // Use JWT validation for controllers, agent secret validation for agents
-        boolean valid;
-        if (role == NodeRole.CONTROLLER) {
-            valid = validateAuthToken(authToken);
-        } else {
-            valid = validateAgentSecret(nodeId, authToken);
-        }
-        if (!valid) {
-            conn.close(1008, "Invalid or missing auth token/secret");
-            System.out.println("Rejected connection for nodeId=" + nodeId + ": invalid token/secret");
-            return;
-        }
-
+        // No authentication for agent/Electron nodes
         NodeInfo nodeInfo = new NodeInfo(conn, role, nodeId);
         NodeInfo oldInfo = nodes.put(nodeId, nodeInfo);
         connToNode.put(conn, nodeInfo);
@@ -186,7 +175,8 @@ public class Server extends WebSocketServer {
     }
 
     private String getQueryParam(String resource, String key) {
-        if (resource == null || !resource.contains("?")) return null;
+        if (resource == null || !resource.contains("?"))
+            return null;
         String query = resource.substring(resource.indexOf('?') + 1);
         for (String param : query.split("&")) {
             String[] kv = param.split("=", 2);
@@ -197,26 +187,8 @@ public class Server extends WebSocketServer {
         return null;
     }
 
-    private boolean validateAuthToken(String token) {
-        if (token == null) return false;
-        try {
-            JWTUtil.validateToken(token);
-            return true;
-        } catch (JwtException | IllegalStateException e) {
-            System.out.println("JWT validation failed: " + e.getMessage());
-            return false;
-        }
-    }
-
-    private boolean validateAgentSecret(String nodeId, String token) {
-        if (nodeId == null || token == null) return false;
-        String expected = nodeSecrets.get(nodeId);
-        return expected != null && expected.equals(token);
-    }
-
     public String rotateNodeSecret(String nodeId) {
         String newSecret = generateSecret();
-        nodeSecrets.put(nodeId, newSecret);
         System.out.println("Secret rotated for nodeId=" + nodeId);
         NodeInfo info = nodes.get(nodeId);
         if (info != null && info.conn.isOpen()) {
@@ -228,17 +200,12 @@ public class Server extends WebSocketServer {
     }
 
     public void setNodeSecret(String nodeId, String secret) {
-        nodeSecrets.put(nodeId, secret);
     }
 
     private String generateSecret() {
         byte[] bytes = new byte[32];
         new SecureRandom().nextBytes(bytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-    }
-
-    public String getNodeSecret(String nodeId) {
-        return nodeSecrets.get(nodeId);
     }
 
     public ConcurrentHashMap<String, NodeInfo> getNodes() {

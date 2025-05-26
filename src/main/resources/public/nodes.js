@@ -1,21 +1,6 @@
-// Replace this with a secure way to get a JWT for the dashboard in production
-const DASHBOARD_NODE_ID = "dashboard-ui";
-let jwtToken = null;
-
-function fetchJwtToken() {
-    return fetch(`/api/generate-jwt/${DASHBOARD_NODE_ID}`)
-        .then(resp => resp.json())
-        .then(data => data.token);
-}
-
+// No JWT required for dashboard
 function fetchNodes() {
-    if (!jwtToken) {
-        // Wait for token before making API call
-        return;
-    }
-    fetch('/api/nodes', {
-        headers: { 'Authorization': 'Bearer ' + jwtToken }
-    })
+    fetch('/api/nodes')
         .then(resp => {
             if (!resp.ok) throw new Error('Failed to fetch nodes');
             return resp.json();
@@ -38,11 +23,6 @@ function fetchNodes() {
         });
 }
 
-// Get JWT first, then start polling
-fetchJwtToken().then(token => {
-    jwtToken = token;
-    fetchNodes();
-    setInterval(fetchNodes, 5000);
-}).catch(err => {
-    console.error('Failed to get JWT token for dashboard:', err);
-});
+// Poll nodes every 5 seconds
+fetchNodes();
+setInterval(fetchNodes, 5000);
