@@ -12,15 +12,9 @@
 
 ```mermaid
 flowchart TD
-    subgraph User Device
-        A[Electron Agent (Tray App)]
-    end
-    subgraph Backend
-        B[WebSocket/HTTP Server]
-    end
-    subgraph Web
-        C[Website/Dashboard]
-    end
+    A[Electron Agent (Tray App)]
+    B[WebSocket/HTTP Server]
+    C[Website/Dashboard]
 
     A -- Connects with nodeId --> B
     C -- User registers, downloads agent --> A
