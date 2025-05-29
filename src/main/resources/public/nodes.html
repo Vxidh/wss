@@ -1,19 +1,115 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Node Status Dashboard</title>
-    <link rel="stylesheet" href="nodes.css">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Connected Nodes</title>
+    <link rel="stylesheet" href="nodes.css" />
 </head>
 <body>
-    <h1>Node Status Dashboard</h1>
-    <table id="nodesTable">
-        <tr>
-            <th>Node ID</th>
-            <th>Status</th>
-            <th>Last Activity</th>
-        </tr>
-    </table>
-    <p><a href="/">Back to Node Setup</a></p>
-    <script src="nodes.js"></script>
+  <h1>Connected Nodes</h1>
+  <table id="nodes-table">
+    <thead>
+      <tr>
+        <th>Node ID</th>
+        <th>Status</th>
+        <th>Last Activity</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <h2>Send Command</h2>
+  <form id="send-command-form">
+    <label for="nodeId">Node ID:</label><br />
+    <input type="text" id="nodeId" name="nodeId" required /><br />
+    <label for="command">JSON Command:</label><br />
+    <textarea id="command" name="command" placeholder='{"type":"ping"}' required></textarea><br />
+    <button type="submit">Send</button>
+  </form>
+
+  <p id="message"></p>
+
+<script>
+  async function fetchNodes() {
+    try {
+      const res = await fetch('/api/nodes');
+      if (!res.ok) throw new Error('Failed to fetch nodes');
+      const nodes = await res.json();
+      const tbody = document.querySelector('#nodes-table tbody');
+      tbody.innerHTML = '';
+
+      nodes.forEach(node => {
+        const tr = document.createElement('tr');
+        // Add status class for row coloring
+        tr.className = node.status.toUpperCase();
+
+        const lastActivity = node.lastActivity ? new Date(node.lastActivity).toLocaleString() : 'N/A';
+
+        tr.innerHTML = `
+          <td>${node.id}</td>
+          <td>${node.status}</td>
+          <td>${lastActivity}</td>
+          <td><button onclick="disconnectNode('${node.id}')">Kick</button></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    } catch (err) {
+      alert(err.message);
+      console.error(err);
+    }
+  }
+
+  async function disconnectNode(nodeId) {
+    if (!confirm(`Disconnect node ${nodeId}?`)) return;
+    try {
+      const res = await fetch(`/api/disconnect/${nodeId}`, { method: 'POST' });
+      if (res.ok) {
+        alert(`Node ${nodeId} disconnected`);
+        fetchNodes();
+      } else {
+        const error = await res.json();
+        alert(error.error || 'Failed to disconnect node');
+      }
+    } catch (err) {
+      alert('Error disconnecting node');
+      console.error(err);
+    }
+  }
+
+  document.getElementById('send-command-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const nodeId = e.target.nodeId.value.trim();
+    let command;
+    try {
+      command = JSON.parse(e.target.command.value);
+    } catch {
+      alert('Invalid JSON in command');
+      return;
+    }
+    try {
+      const res = await fetch(`/api/send/${encodeURIComponent(nodeId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(command),
+      });
+      const messageElem = document.getElementById('message');
+      if (res.ok) {
+        messageElem.textContent = `Command sent to node ${nodeId}`;
+        e.target.command.value = '';
+      } else {
+        const err = await res.json();
+        messageElem.textContent = `Error: ${err.error || 'Failed to send command'}`;
+      }
+    } catch (err) {
+      alert('Error sending command');
+      console.error(err);
+    }
+  });
+
+  fetchNodes();
+  setInterval(fetchNodes, 10000);
+</script>
 </body>
 </html>

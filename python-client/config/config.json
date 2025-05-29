@@ -1,0 +1,5 @@
+{
+  "server_url": "ws://localhost:8080/ws",
+  "node_id": "node123",
+  "heartbeat_interval": 10
+}

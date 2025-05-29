@@ -22,3 +22,4 @@ Thumbs.db
 
 # Ignore node_modules in electron-agent
 electron-agent/node_modules/
+electron-agent/dist/

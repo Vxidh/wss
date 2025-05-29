@@ -1,9 +1,6 @@
 package com.example.websocket;
-
 import static spark.Spark.*;
-
 import java.util.*;
-
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -19,38 +16,13 @@ public class HTTPServer {
     public void start(int port) {
         port(port);
         staticFiles.location("/public");
-        configureCORS();
         configureRoutes();
         configureErrorHandling();
-    }
-
-    private void configureCORS() {
-        options("/*", (request, response) -> {
-            String headers = request.headers("Access-Control-Request-Headers");
-            if (headers != null) {
-                response.header("Access-Control-Allow-Headers", headers);
-            }
-
-            String methods = request.headers("Access-Control-Request-Method");
-            if (methods != null) {
-                response.header("Access-Control-Allow-Methods", methods);
-            }
-
-            return "OK";
-        });
-
-        before((req, res) -> {
-            res.header("Access-Control-Allow-Origin", "*");
-            res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-            res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-        });
-
     }
 
     private void configureRoutes() {
         get("/api/nodes", (req, res) -> {
             List<Map<String, Object>> nodesList = new ArrayList<>();
-
             wsServer.getNodes().forEach((nodeId, info) -> {
                 Map<String, Object> node = new HashMap<>();
                 node.put("id", nodeId);
@@ -58,37 +30,46 @@ public class HTTPServer {
                 node.put("lastActivity", info.lastActivity);
                 nodesList.add(node);
             });
-
             res.type("application/json");
             return gson.toJson(nodesList);
         });
 
+        // MODIFIED: This route now correctly extracts the nested command and requestId
         post("/api/send/:nodeId", (req, res) -> {
             String nodeId = req.params(":nodeId");
-            JsonObject command;
+            JsonObject incomingFullPayload; // This will hold the entire JSON received from mock_master.py
             try {
-                command = JsonParser.parseString(req.body()).getAsJsonObject();
+                incomingFullPayload = JsonParser.parseString(req.body()).getAsJsonObject();
             } catch (Exception e) {
-                System.err.println("[PAYLOAD ERROR] Invalid JSON payload for nodeId=" + nodeId + " from " + req.ip()
-                        + ": " + e.getMessage());
-                e.printStackTrace();
                 res.status(400);
-                res.type("application/json");
-                res.header("Access-Control-Allow-Origin", "*");
                 return "{\"error\":\"Invalid JSON payload\"}";
             }
 
-            boolean sent = wsServer.sendToNode(nodeId, command);
-            res.type("application/json");
+            // --- CRITICAL FIX START ---
+            // Extract the 'command' object which is the *actual* payload for the Python node
+            JsonObject commandForNode = incomingFullPayload.getAsJsonObject("command");
+            if (commandForNode == null) {
+                res.status(400);
+                return "{\"error\":\"Missing 'command' object in payload for node\"}";
+            }
 
+            // Extract the 'requestId' if it exists in the incoming payload
+            String requestId = null;
+            if (incomingFullPayload.has("requestId")) {
+                requestId = incomingFullPayload.get("requestId").getAsString();
+            }
+            // --- CRITICAL FIX END ---
+
+            // Now, pass the extracted 'commandForNode' and 'requestId' to the WebSocket server.
+            // The Server.java's sendToNodeWithRequestId will add the requestId to the top level
+            // of the JSON it sends to the Python node.
+            boolean sent = wsServer.sendToNodeWithRequestId(nodeId, commandForNode, requestId);
+            res.type("application/json");
             if (sent) {
-                return "{\"status\":\"Command sent to node " + nodeId + "\"}";
+                // Include requestId in the success response for better tracking
+                return "{\"status\":\"Command sent to node " + nodeId + "\", \"requestId\":\"" + (requestId != null ? requestId : "") + "\"}";
             } else {
-                System.err.println(
-                        "[SEND ERROR] Node " + nodeId + " not connected or idle (request from " + req.ip() + ")");
                 res.status(404);
-                res.type("application/json");
-                res.header("Access-Control-Allow-Origin", "*");
                 return "{\"error\":\"Node " + nodeId + " not connected or idle\"}";
             }
         });
@@ -98,56 +79,28 @@ public class HTTPServer {
             boolean disconnected = wsServer.disconnectNode(nodeId);
             res.type("application/json");
             if (disconnected) {
-                System.out.println(
-                        "[DISCONNECT] Node " + nodeId + " disconnected via API (request from " + req.ip() + ")");
                 return "{\"status\":\"Node " + nodeId + " disconnected\"}";
             } else {
-                System.err.println("[DISCONNECT ERROR] Node " + nodeId
-                        + " not found or already disconnected (request from " + req.ip() + ")");
                 res.status(404);
-                res.header("Access-Control-Allow-Origin", "*");
                 return "{\"error\":\"Node " + nodeId + " not found or already disconnected\"}";
             }
         });
 
-        post("/api/rotate-secret/:nodeId", (req, res) -> {
-            String nodeId = req.params(":nodeId");
-            // Actually rotate the secret and return it
-            String newSecret = wsServer.rotateNodeSecret(nodeId);
-            res.type("application/json");
-            return "{\"status\":\"Secret rotated for node " + nodeId + "\",\"newSecret\":\"" + newSecret + "\"}";
-        });
+        // New endpoint to check Master Server connection (uncomment if needed)
+        // get("/api/master/status", (req, res) -> {
+        //     res.type("application/json");
+        //     Map<String, Object> status = new HashMap<>();
+        //     status.put("masterConnected", wsServer.isUpstreamMasterConnected()); // Use the correct method name
+        //     return gson.toJson(status);
+        // });
 
-        get("/", (req, res) -> {
-            res.type("text/html");
-            return renderStaticHtml("index.html");
-        });
-
-        get("/nodes", (req, res) -> {
-            res.type("text/html");
-            return renderStaticHtml("nodes.html");
-        });
-
-        get("/health", (req, res) -> {
-            res.type("text/plain");
-            return "OK";
-        });
-    }
-
-    private String renderStaticHtml(String filename) {
-        try (java.io.InputStream is = getClass().getResourceAsStream("/public/" + filename)) {
-            if (is == null)
-                return "<h1>File not found: " + filename + "</h1>";
-            return new String(is.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            return "<h1>Error loading " + filename + "</h1>";
-        }
+        get("/health", (req, res) -> "OK");
     }
 
     private void configureErrorHandling() {
         exception(Exception.class, (e, req, res) -> {
             System.err.println("[UNHANDLED ERROR] " + req.requestMethod() + " " + req.pathInfo() + " from " + req.ip()
-                    + ": " + e.getMessage());
+                                + ": " + e.getMessage());
             e.printStackTrace();
             res.status(500);
             res.type("application/json");

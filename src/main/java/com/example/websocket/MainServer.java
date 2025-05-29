@@ -4,10 +4,12 @@ public class MainServer {
     public static void main(String[] args) {
         int wsPort = 8080;
         int httpPort = 4567;
-
         Server wsServer = new Server(wsPort);
-        wsServer.setNodeSecret("AGENT001", "bd0acd7235c524ba11834ec79dfa5a5738190276c4522f38d96e31f2cd2de522");
         HTTPServer httpServer = new HTTPServer(wsServer);
+
+        // COMMENT OUT or REMOVE this line if you don't have a separate
+        // UPSTREAM Master Server running on ws://localhost:9999
+        // wsServer.connectToUpstreamMaster("ws://localhost:9999");
 
         Thread wsThread = new Thread(() -> {
             try {
@@ -18,7 +20,6 @@ public class MainServer {
                 e.printStackTrace();
             }
         });
-
         Thread httpThread = new Thread(() -> {
             try {
                 httpServer.start(httpPort);
