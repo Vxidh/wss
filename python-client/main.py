@@ -45,28 +45,24 @@ class NodeClient:
             data = json.loads(message)
             print(f"Received: {message}")
             
-            # Handle ping
             if data.get("type") == "ping":
                 pong_response = {"type": "pong"}
                 ws.send(json.dumps(pong_response))
                 print("Sent pong response")
                 return
             
-            # Handle commands
             if data.get("type") == "command" and "command" in data:
                 command_data = data["command"]
                 request_id = data.get("requestId")  # Extract requestId
                 
                 response = self.dispatcher.execute_command(command_data)
                 
-                # Send response back to server with requestId
                 response_message = {
                     "type": "commandResponse",
                     "nodeId": self.node_id,
                     "response": response
                 }
                 
-                # Include requestId if provided
                 if request_id:
                     response_message["requestId"] = request_id
                 
@@ -84,7 +80,6 @@ class NodeClient:
                 }
             }
             
-            # Include requestId if available
             try:
                 data = json.loads(message)
                 request_id = data.get("requestId")
@@ -106,13 +101,12 @@ class NodeClient:
         print(f"Connected to server as node: {self.node_id}")
         self.running = True
         
-        # Start ping thread
         def ping_thread():
             while self.running:
                 try:
                     ping_message = {"type": "ping"}
                     ws.send(json.dumps(ping_message))
-                    time.sleep(25)  # Ping every 25 seconds
+                    time.sleep(25)  
                 except:
                     break
         

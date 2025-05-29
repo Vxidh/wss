@@ -352,8 +352,6 @@ public class Server extends WebSocketServer {
                 JsonObject responsePayload = json.has("response") ? json.get("response").getAsJsonObject() : new JsonObject();
 
                 if (requestId != null) {
-                    // Check if the original command came from the INCOMING_TEST_MASTER or UPSTREAM_MASTER
-                    // This is a simplification; a more robust system might store which master issued the request
                     if (incomingTestMasterWebSocket != null && isIncomingTestMaster.containsKey(incomingTestMasterWebSocket)) {
                         // Assuming, for testing, that if mock master is connected, responses go back to it
                         // You might need more complex logic if specific requestId needs to go to a specific master.
@@ -508,8 +506,6 @@ public class Server extends WebSocketServer {
         return false;
     }
 
-    // Sends a command to a specific node, including a requestId for response tracking
-    // This is the version used internally when commands come from a master.
     public boolean sendToNodeWithRequestId(String nodeId, JsonObject command, String requestId) {
         NodeInfo info = nodes.get(nodeId);
         if (info != null && info.conn != null && info.conn.isOpen() && info.status == NodeStatus.ACTIVE) {
@@ -525,19 +521,15 @@ public class Server extends WebSocketServer {
         return false;
     }
 
-    // Disconnects a specific node by its ID
     public boolean disconnectNode(String nodeId) {
-        NodeInfo info = nodes.remove(nodeId); // Remove from 'nodes' map
+        NodeInfo info = nodes.remove(nodeId); 
         if (info != null && info.conn != null && info.conn.isOpen()) {
-            info.conn.close(1000, "Disconnected by server request"); // Close the WebSocket connection
-            // The onClose callback will handle the removal from connToNode and notification to upstream master
+            info.conn.close(1000, "Disconnected by server request"); 
             System.out.println("❌ Node " + nodeId + " disconnected by server request.");
             return true;
         }
         return false;
     }
-
-    // Extracts a query parameter from a WebSocket resource descriptor (URL)
     private String getQueryParam(String resource, String key) {
         if (resource == null || !resource.contains("?")) return null;
         String query = resource.substring(resource.indexOf('?') + 1);
@@ -550,12 +542,10 @@ public class Server extends WebSocketServer {
         return null;
     }
 
-    // Returns an unmodifiable map of currently connected nodes
     public Map<String, NodeInfo> getNodes() {
         return Collections.unmodifiableMap(nodes);
     }
 
-    // Checks if the UPSTREAM master is connected
     public boolean isUpstreamMasterConnected() {
         return upstreamMasterConnected;
     }

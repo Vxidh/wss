@@ -10,19 +10,21 @@
 
 ## Architecture
 
-```mermaid
-flowchart TD
-    A[Electron Agent (Tray App)]
-    B[WebSocket/HTTP Server]
-    C[Website/Dashboard]
-
-    A -- Connects with nodeId --> B
-    C -- User registers, downloads agent --> A
-    C -- Sends commands (via API) --> B
-    B -- Relays commands --> A
-    A -- Sends results (e.g. screenshot) --> B
-    B -- (Optional) Forwards results to C
-```
++----------------+       HTTP POST       +---------------------+     WebSocket      +------------------+
+|                |---------------------->|                     |------------------->|                  |
+| Master/Orchestrator                    | Java Server         |                    | Python RPA Agent |
+| (e.g., PowerShell/curl)                | (HTTPServer & Server)|<-------------------| (main.py)        |
+|                |                       |                     |    Command/Status  |                  |
++----------------+                       +---------------------+                    +------------------+
+                                                    |
+                                                    | WebSocket
+                                                    |
+                                                    v
+                                          +------------------+
+                                          | Python RPA Agent |
+                                          | (main.py)        |
+                                          +------------------+
+                                          (Supports multiple agents concurrently)
 
 ## Quick Start
 

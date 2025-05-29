@@ -8,7 +8,6 @@ def build_exe():
         '--onefile',
         '--name=NodeClient',
         '--console',
-        # Removed the problematic --add-data line
         '--hidden-import=websocket',
         '--hidden-import=pyautogui',
         '--hidden-import=PIL',
