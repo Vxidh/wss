@@ -20,10 +20,15 @@ import com.example.websocket.NodeRegistry.Role;
 import com.example.websocket.UpstreamMasterClient;
 import com.example.websocket.CommandOrchestrator;
 import com.example.websocket.NodeCommander;
-import com.example.websocket.IncomingTestMasterSender; // <--- THIS IS THE IMPORT YOU NEEDED TO ADD
+import com.example.websocket.IncomingTestMasterSender;
 
-// UPDATED CLASS DECLARATION: NOW IMPLEMENTS IncomingTestMasterSender
+import org.slf4j.Logger; // NEW IMPORT
+import org.slf4j.LoggerFactory; // NEW IMPORT
+
+
 public class Server extends WebSocketServer implements IncomingTestMasterSender {
+    private static final Logger logger = LoggerFactory.getLogger(Server.class); // NEW LOGGER INSTANCE
+
     private static final String ADMIN_TOKEN = "super-secret-admin-token";
 
     private final NodeRegistry nodeRegistry;
@@ -36,7 +41,7 @@ public class Server extends WebSocketServer implements IncomingTestMasterSender 
 
     public Server(int port) {
         super(new InetSocketAddress(port));
-        System.out.println("Server: Initializing on port " + port);
+        logger.info("Server: Initializing on port {}", port); // Changed to logger.info
 
         this.nodeRegistry = new NodeRegistry();
 
@@ -48,9 +53,6 @@ public class Server extends WebSocketServer implements IncomingTestMasterSender 
 
         this.nodeCommander = new NodeCommander(nodeRegistry);
 
-        // This line remains the same as our last successful build,
-        // but it's important that 'this' (the Server instance) is passed
-        // because Server now implements IncomingTestMasterSender.
         this.commandOrchestrator = new CommandOrchestrator(nodeRegistry, upstreamMasterClient, this.nodeCommander, this);
     }
 
@@ -85,7 +87,7 @@ public class Server extends WebSocketServer implements IncomingTestMasterSender 
 
     @Override
     public void onOpen(WebSocket conn, ClientHandshake handshake) {
-        System.out.println("Server: New connection handshake from " + conn.getRemoteSocketAddress().getAddress().getHostAddress() + ": " + handshake.getResourceDescriptor());
+        logger.info("Server: New connection handshake from {}: {}", conn.getRemoteSocketAddress().getAddress().getHostAddress(), handshake.getResourceDescriptor()); // Changed to logger.info
 
         String adminToken = NodeRegistry.getQueryParam(handshake.getResourceDescriptor(), "adminToken");
 
@@ -101,7 +103,7 @@ public class Server extends WebSocketServer implements IncomingTestMasterSender 
 
         if (nodeId == null || nodeId.isEmpty()) {
             conn.close(1008, "Missing nodeId query parameter. Connection closed.");
-            System.out.println("❌ Server: Connection from " + conn.getRemoteSocketAddress().getAddress().getHostAddress() + " closed due to missing nodeId.");
+            logger.warn("Server: Connection from {} closed due to missing nodeId.", conn.getRemoteSocketAddress().getAddress().getHostAddress()); // Changed to logger.warn
             return;
         }
 
@@ -118,13 +120,9 @@ public class Server extends WebSocketServer implements IncomingTestMasterSender 
         nodeRegistry.unregisterConnection(conn);
 
         if (info != null) {
-            System.out.println("❌ Server: " + info.role + " disconnected: " + info.nodeId + ". Reason: " + reason);
-
-            if (info.role == Role.CLIENT_NODE && isUpstreamMasterConnected()) {
-                upstreamMasterClient.reportNodeStatus(info.nodeId, "disconnected");
-            }
+            logger.warn("Server: {} disconnected: {}. Reason: {}", info.role, info.nodeId, reason); // Changed to logger.warn
         } else {
-            System.out.println("❌ Server: Unknown connection disconnected: " + conn.getRemoteSocketAddress().getAddress().getHostAddress() + ". Reason: " + reason);
+            logger.warn("Server: Unknown connection disconnected: {}. Reason: {}", conn.getRemoteSocketAddress().getAddress().getHostAddress(), reason); // Changed to logger.warn
         }
     }
 
@@ -132,7 +130,7 @@ public class Server extends WebSocketServer implements IncomingTestMasterSender 
     public void onMessage(WebSocket conn, String message) {
         NodeInfo sender = nodeRegistry.getNodeInfoByConnection(conn);
         if (sender == null) {
-            System.out.println("Server: Unknown sender (not a recognized connection) message: " + message);
+            logger.info("Server: Unknown sender (not a recognized connection) message: {}", message); // Changed to logger.info
             return;
         }
 
@@ -145,7 +143,7 @@ public class Server extends WebSocketServer implements IncomingTestMasterSender 
         try {
             json = JsonParser.parseString(message).getAsJsonObject();
         } catch (Exception e) {
-            System.out.println("Server: Invalid JSON from node " + sender.nodeId + ": " + message);
+            logger.warn("Server: Invalid JSON from node {}: {}", sender.nodeId, message); // Changed to logger.warn
             return;
         }
 
@@ -155,7 +153,7 @@ public class Server extends WebSocketServer implements IncomingTestMasterSender 
             JsonObject pong = new JsonObject();
             pong.addProperty("type", "pong");
             conn.send(pong.toString());
-            System.out.println("🏓 Server: Ping received from " + sender.nodeId + ", sent pong.");
+            logger.info("Server: Ping received from {}, sent pong.", sender.nodeId); // Changed to logger.info
             return;
         }
 
@@ -164,9 +162,9 @@ public class Server extends WebSocketServer implements IncomingTestMasterSender 
             NodeInfo target = nodeRegistry.getClientNodeInfo(targetNodeId);
             if (target != null && target.conn != null && target.conn.isOpen()) {
                 target.conn.send(json.toString());
-                System.out.println("📨 Server: Forwarded message from " + sender.nodeId + " to " + targetNodeId);
+                logger.info("Server: Forwarded message from {} to {}", sender.nodeId, targetNodeId); // Changed to logger.info
             } else {
-                System.out.println("❌ Server: Target node not found or not available: " + targetNodeId);
+                logger.warn("Server: Target node not found or not available: {}", targetNodeId); // Changed to logger.warn
             }
         } else {
             commandOrchestrator.handleNodeResponse(sender, json);
@@ -177,8 +175,7 @@ public class Server extends WebSocketServer implements IncomingTestMasterSender 
         commandOrchestrator.handleMasterCommand("UPSTREAM", message);
     }
 
-    // These methods now implicitly implement IncomingTestMasterSender's interface methods
-    @Override // <--- You can optionally add @Override annotations here for clarity
+    @Override
     public void sendErrorToIncomingTestMaster(String requestId, String nodeId, String errorMessage) {
         WebSocket masterConn = nodeRegistry.getIncomingTestMasterWebSocket();
         if (masterConn != null && masterConn.isOpen()) {
@@ -191,11 +188,11 @@ public class Server extends WebSocketServer implements IncomingTestMasterSender 
             response.addProperty("message", errorMessage);
             errorResponse.add("response", response);
             masterConn.send(errorResponse.toString());
-            System.out.println("📤 Server: Sent error to INCOMING Mock Master: " + errorMessage);
+            logger.info("Server: Sent error to INCOMING Mock Master: {}", errorMessage); // Changed to logger.info
         }
     }
 
-    @Override // <--- You can optionally add @Override annotations here for clarity
+    @Override
     public void forwardResponseToIncomingTestMaster(String nodeId, JsonObject response, String requestId) {
         WebSocket masterConn = nodeRegistry.getIncomingTestMasterWebSocket();
         if (masterConn != null && masterConn.isOpen()) {
@@ -206,7 +203,7 @@ public class Server extends WebSocketServer implements IncomingTestMasterSender 
             masterResponse.add("response", response);
 
             masterConn.send(masterResponse.toString());
-            System.out.println("📤 Server: Forwarded response to INCOMING Mock Master Server for requestId: " + requestId);
+            logger.info("Server: Forwarded response to INCOMING Mock Master Server for requestId: {}", requestId); // Changed to logger.info
         }
     }
 
@@ -214,33 +211,32 @@ public class Server extends WebSocketServer implements IncomingTestMasterSender 
     public void onError(WebSocket conn, Exception ex) {
         NodeInfo info = nodeRegistry.getNodeInfoByConnection(conn);
         if (info != null) {
-            System.err.println("❌ Server: " + info.role + " connection error for " + info.nodeId + ": " + ex.getMessage());
+            logger.error("Server: {} connection error for {}: {}", info.role, info.nodeId, ex.getMessage(), ex); // Changed to logger.error, added ex
         } else {
-            System.err.println("❌ Server: Unknown connection error: " + (conn != null ? conn.getRemoteSocketAddress().getAddress().getHostAddress() : "null connection") + ": " + ex.getMessage());
+            logger.error("Server: Unknown connection error: {}: {}", (conn != null ? conn.getRemoteSocketAddress().getAddress().getHostAddress() : "null connection"), ex.getMessage(), ex); // Changed to logger.error, added ex
         }
-        ex.printStackTrace();
     }
 
     @Override
     public void onStart() {
-        System.out.println("🚀 Server started on port " + getPort());
+        logger.info("🚀 Server started on port {}", getPort()); // Changed to logger.info
     }
 
     @Override
     public void stop() throws InterruptedException {
         super.stop();
-        System.out.println("Server: Shutting down shared scheduler...");
+        logger.info("Server: Shutting down shared scheduler..."); // Changed to logger.info
         sharedScheduler.shutdown();
         try {
             if (!sharedScheduler.awaitTermination(5, TimeUnit.SECONDS)) {
-                System.err.println("Server: Shared scheduler did not terminate in time. Forcing shutdown.");
+                logger.error("Server: Shared scheduler did not terminate in time. Forcing shutdown."); // Changed to logger.error
                 sharedScheduler.shutdownNow();
             }
         } catch (InterruptedException e) {
-            System.err.println("Server: Interrupted while waiting for scheduler to terminate.");
+            logger.error("Server: Interrupted while waiting for scheduler to terminate.", e); // Changed to logger.error, added e
             sharedScheduler.shutdownNow();
             Thread.currentThread().interrupt();
         }
-        System.out.println("Server: Shared scheduler shut down.");
+        logger.info("Server: Shared scheduler shut down."); // Changed to logger.info
     }
 }
