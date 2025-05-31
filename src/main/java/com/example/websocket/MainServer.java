@@ -5,7 +5,7 @@ public class MainServer {
         int wsPort = 8080;
         int httpPort = 4567;
         Server wsServer = new Server(wsPort);
-        HTTPServer httpServer = new HTTPServer(wsServer);
+        HTTPServer httpServer = new HTTPServer(httpPort, wsServer);
 
         // COMMENT OUT or REMOVE this line if you don't have a separate
         // UPSTREAM Master Server running on ws://localhost:9999
@@ -22,7 +22,7 @@ public class MainServer {
         });
         Thread httpThread = new Thread(() -> {
             try {
-                httpServer.start(httpPort);
+                httpServer.start();
                 System.out.println("HTTP server started on port " + httpPort);
             } catch (Exception e) {
                 System.err.println("Failed to start HTTP server: " + e.getMessage());

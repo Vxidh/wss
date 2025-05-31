@@ -1,116 +1,100 @@
+// src/main/java/com/example/websocket/HTTPServer.java
 package com.example.websocket;
+
 import static spark.Spark.*;
-import java.util.*;
+
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.JsonParseException;
+
+import java.net.ConnectException; // Keep if still used, remove if not
+import java.util.Map;
+
+import com.example.websocket.NodeRegistry.NodeInfo;
+// REMOVE: import com.example.websocket.Server; // Not directly needed as a field if only accessing via methods now.
+// If you still have `Server wsServer;` as a field, keep the import. We'll adjust based on your current setup.
+
 
 public class HTTPServer {
-    private final Server wsServer;
-    private final Gson gson = new Gson();
+    private final int port;
+    private final Server wsServer; // Keep this field for now, it's still useful for other Server methods
 
-    public HTTPServer(Server wsServer) {
-        this.wsServer = wsServer;
+    private static final Gson gson = new Gson();
+
+    public HTTPServer(int port, Server wsServer) {
+        this.port = port;
+        this.wsServer = wsServer; // Assign the WebSocket server instance
+        System.out.println("HTTPServer: Initialized on port " + port);
     }
 
-    public void start(int port) {
+    public void start() {
         port(port);
+
+        // Serve static files from src/main/resources/public
         staticFiles.location("/public");
-        configureRoutes();
-        configureErrorHandling();
-    }
 
-    private void configureRoutes() {
+        // API endpoint to get a list of active nodes
         get("/api/nodes", (req, res) -> {
-            List<Map<String, Object>> nodesList = new ArrayList<>();
-            wsServer.getNodes().forEach((nodeId, info) -> {
-                Map<String, Object> node = new HashMap<>();
-                node.put("id", nodeId);
-                node.put("status", info.status.toString());
-                node.put("lastActivity", info.lastActivity);
-                nodesList.add(node);
-            });
             res.type("application/json");
-            return gson.toJson(nodesList);
+            Map<String, NodeInfo> activeNodes = wsServer.getNodes(); // Access via wsServer
+            return gson.toJson(activeNodes.values()); // Return values as a list
         });
 
-        // MODIFIED: This route now correctly extracts the nested command and requestId
+        // API endpoint to send a command to a specific node by ID
         post("/api/send/:nodeId", (req, res) -> {
+            res.type("application/json");
             String nodeId = req.params(":nodeId");
-            JsonObject incomingFullPayload; // This will hold the entire JSON received from mock_master.py
+
             try {
-                incomingFullPayload = JsonParser.parseString(req.body()).getAsJsonObject();
+                JsonObject command = JsonParser.parseString(req.body()).getAsJsonObject();
+
+                // UPDATED LINE: Call sendToNode via NodeCommander retrieved from wsServer
+                if (wsServer.getNodeCommander().sendToNode(nodeId, command)) {
+                    return gson.toJson(Map.of("status", "success", "message", "Command sent to node " + nodeId));
+                } else {
+                    res.status(404);
+                    return gson.toJson(Map.of("status", "error", "message", "Node " + nodeId + " not found or not active."));
+                }
+            } catch (JsonParseException e) {
+                res.status(400);
+                return gson.toJson(Map.of("status", "error", "message", "Invalid JSON command: " + e.getMessage()));
             } catch (Exception e) {
-                res.status(400);
-                return "{\"error\":\"Invalid JSON payload\"}";
-            }
-
-            // --- CRITICAL FIX START ---
-            // Extract the 'command' object which is the *actual* payload for the Python node
-            JsonObject commandForNode = incomingFullPayload.getAsJsonObject("command");
-            if (commandForNode == null) {
-                res.status(400);
-                return "{\"error\":\"Missing 'command' object in payload for node\"}";
-            }
-
-            // Extract the 'requestId' if it exists in the incoming payload
-            String requestId = null;
-            if (incomingFullPayload.has("requestId")) {
-                requestId = incomingFullPayload.get("requestId").getAsString();
-            }
-            // --- CRITICAL FIX END ---
-
-            // Now, pass the extracted 'commandForNode' and 'requestId' to the WebSocket server.
-            // The Server.java's sendToNodeWithRequestId will add the requestId to the top level
-            // of the JSON it sends to the Python node.
-            boolean sent = wsServer.sendToNodeWithRequestId(nodeId, commandForNode, requestId);
-            res.type("application/json");
-            if (sent) {
-                // Include requestId in the success response for better tracking
-                return "{\"status\":\"Command sent to node " + nodeId + "\", \"requestId\":\"" + (requestId != null ? requestId : "") + "\"}";
-            } else {
-                res.status(404);
-                return "{\"error\":\"Node " + nodeId + " not connected or idle\"}";
+                res.status(500);
+                return gson.toJson(Map.of("status", "error", "message", "Server error: " + e.getMessage()));
             }
         });
 
+        // API endpoint to disconnect a specific node by ID
         post("/api/disconnect/:nodeId", (req, res) -> {
-            String nodeId = req.params(":nodeId");
-            boolean disconnected = wsServer.disconnectNode(nodeId);
             res.type("application/json");
-            if (disconnected) {
-                return "{\"status\":\"Node " + nodeId + " disconnected\"}";
+            String nodeId = req.params(":nodeId");
+
+            if (wsServer.disconnectNode(nodeId)) { // Call disconnectNode on wsServer
+                return gson.toJson(Map.of("status", "success", "message", "Node " + nodeId + " disconnected."));
             } else {
                 res.status(404);
-                return "{\"error\":\"Node " + nodeId + " not found or already disconnected\"}";
+                return gson.toJson(Map.of("status", "error", "message", "Node " + nodeId + " not found or could not be disconnected."));
             }
         });
 
-        // New endpoint to check Master Server connection (uncomment if needed)
-        // get("/api/master/status", (req, res) -> {
-        //     res.type("application/json");
-        //     Map<String, Object> status = new HashMap<>();
-        //     status.put("masterConnected", wsServer.isUpstreamMasterConnected()); // Use the correct method name
-        //     return gson.toJson(status);
-        // });
-
-        get("/health", (req, res) -> "OK");
-    }
-
-    private void configureErrorHandling() {
-        exception(Exception.class, (e, req, res) -> {
-            System.err.println("[UNHANDLED ERROR] " + req.requestMethod() + " " + req.pathInfo() + " from " + req.ip()
-                                + ": " + e.getMessage());
-            e.printStackTrace();
-            res.status(500);
+        // API endpoint to check Upstream Master connection status
+        get("/api/upstream-status", (req, res) -> {
             res.type("application/json");
-            res.header("Access-Control-Allow-Origin", "*");
-            res.body("{\"error\":\"Internal server error\"}");
+            boolean isConnected = wsServer.isUpstreamMasterConnected();
+            return gson.toJson(Map.of("status", isConnected ? "connected" : "disconnected"));
         });
+
+        System.out.println("HTTP Server: Routes configured.");
     }
 
-    public static void main(String[] args) {
-        System.err.println("Please use MainServer.java to start the application (handles config init).");
-        System.exit(1);
+    public void stop() {
+        System.out.println("HTTP Server: Stopping...");
+        // Ensure this calls Spark's stop method correctly.
+        // If your Spark import is 'static spark.Spark.*;', then it's just 'stop();'
+        // If it's a Spark instance, it would be 'instance.stop();'
+        // Assuming static import:
+        stop(); // Spark stop method
+        System.out.println("HTTP Server: Stopped.");
     }
 }
