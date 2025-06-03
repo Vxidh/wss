@@ -7,19 +7,13 @@ import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonParseException;
-
-import java.net.ConnectException; // Keep if still used, remove if not
 import java.util.Map;
 
 import com.example.websocket.NodeRegistry.NodeInfo;
-// REMOVE: import com.example.websocket.Server; // Not directly needed as a field if only accessing via methods now.
-// If you still have `Server wsServer;` as a field, keep the import. We'll adjust based on your current setup.
-
 
 public class HTTPServer {
     private final int port;
-    private final Server wsServer; // Keep this field for now, it's still useful for other Server methods
-
+    private final Server wsServer; 
     private static final Gson gson = new Gson();
 
     public HTTPServer(int port, Server wsServer) {
@@ -30,14 +24,13 @@ public class HTTPServer {
 
     public void start() {
         port(port);
-
-        // Serve static files from src/main/resources/public
         staticFiles.location("/public");
 
         // API endpoint to get a list of active nodes
         get("/api/nodes", (req, res) -> {
             res.type("application/json");
-            Map<String, NodeInfo> activeNodes = wsServer.getNodes(); // Access via wsServer
+            // Assuming Server has a public method getNodes() that returns Map<String, NodeInfo>
+            Map<String, NodeInfo> activeNodes = wsServer.getNodes();
             return gson.toJson(activeNodes.values()); // Return values as a list
         });
 
@@ -48,8 +41,6 @@ public class HTTPServer {
 
             try {
                 JsonObject command = JsonParser.parseString(req.body()).getAsJsonObject();
-
-                // UPDATED LINE: Call sendToNode via NodeCommander retrieved from wsServer
                 if (wsServer.getNodeCommander().sendToNode(nodeId, command)) {
                     return gson.toJson(Map.of("status", "success", "message", "Command sent to node " + nodeId));
                 } else {
@@ -64,13 +55,10 @@ public class HTTPServer {
                 return gson.toJson(Map.of("status", "error", "message", "Server error: " + e.getMessage()));
             }
         });
-
-        // API endpoint to disconnect a specific node by ID
         post("/api/disconnect/:nodeId", (req, res) -> {
             res.type("application/json");
             String nodeId = req.params(":nodeId");
-
-            if (wsServer.disconnectNode(nodeId)) { // Call disconnectNode on wsServer
+            if (wsServer.disconnectNode(nodeId)) {
                 return gson.toJson(Map.of("status", "success", "message", "Node " + nodeId + " disconnected."));
             } else {
                 res.status(404);
@@ -78,22 +66,11 @@ public class HTTPServer {
             }
         });
 
-        // API endpoint to check Upstream Master connection status
-        get("/api/upstream-status", (req, res) -> {
-            res.type("application/json");
-            boolean isConnected = wsServer.isUpstreamMasterConnected();
-            return gson.toJson(Map.of("status", isConnected ? "connected" : "disconnected"));
-        });
-
         System.out.println("HTTP Server: Routes configured.");
     }
 
     public void stop() {
         System.out.println("HTTP Server: Stopping...");
-        // Ensure this calls Spark's stop method correctly.
-        // If your Spark import is 'static spark.Spark.*;', then it's just 'stop();'
-        // If it's a Spark instance, it would be 'instance.stop();'
-        // Assuming static import:
         stop(); // Spark stop method
         System.out.println("HTTP Server: Stopped.");
     }

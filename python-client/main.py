@@ -193,10 +193,20 @@ class NodeClient:
     
     def on_open(self, ws):
         print(f"Connected to server as node: {self.node_id}")
-        self.running = True # Indicate that the client is connected and running
+        self.running = True
 
-        if not self.worker_thread.is_alive(): # Only start if not already running
-            # If the thread finished its loop, re-create it for robustness on reconnect
+        
+        identification_message = {
+            "type": "identify_rpa_node", 
+            "nodeId": self.node_id,
+            "clientName": "Python_Node_Client",
+            "clientVersion": "1.0.0"             
+        }
+        ws.send(json.dumps(identification_message))
+        print(f"Sent identification message: {identification_message['type']}")
+
+
+        if not self.worker_thread.is_alive():
             self.worker_thread = threading.Thread(target=self._command_worker, daemon=True)
             self.worker_thread.start()
             print("Command worker thread started (after WebSocket connection opened).")

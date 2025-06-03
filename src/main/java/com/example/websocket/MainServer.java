@@ -4,8 +4,7 @@ public class MainServer {
     public static void main(String[] args) {
         int wsPort = 8080;
         int httpPort = 4567;
-        String upstreamMasterUrl = "ws://localhost:9999";
-        Server wsServer = new Server(wsPort, upstreamMasterUrl);
+        Server wsServer = new Server(wsPort);
         HTTPServer httpServer = new HTTPServer(httpPort, wsServer);
 
         Thread wsThread = new Thread(() -> {

@@ -2,17 +2,19 @@
 package com.example.websocket;
 
 import org.java_websocket.WebSocket;
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.Collections;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.HashSet;
 
 public class NodeRegistry {
+    private static final Logger logger = LoggerFactory.getLogger(NodeRegistry.class);
 
     // --- Public static nested Enums and Class ---
     public enum NodeStatus {
@@ -31,17 +33,23 @@ public class NodeRegistry {
         private static final long IDLE_TIMEOUT_MS = 30000; // 30 seconds
         private static final long CONNECTION_LIFESPAN_MS = 30 * 60 * 1000; // 30 minutes
 
-        public NodeInfo(WebSocket conn, String nodeId, Role role) {
+        public NodeInfo(String nodeId, WebSocket conn, Role role) {
             this.conn = conn;
             this.lastActivity = System.currentTimeMillis();
             this.connectedAt = this.lastActivity;
             this.status = NodeStatus.ACTIVE;
             this.nodeId = nodeId;
             this.role = role;
+            if (role == Role.CLIENT_NODE || role == Role.BATCH_SERVER_CLIENT) {
+                this.authenticated = true;
+            }
         }
 
         public void updateActivity() {
             this.lastActivity = System.currentTimeMillis();
+            if (this.status == NodeStatus.IDLE) {
+                logger.debug("NodeRegistry: Node {} ({}) status changed from IDLE to ACTIVE.", nodeId, role);
+            }
             this.status = NodeStatus.ACTIVE;
         }
 
@@ -56,75 +64,102 @@ public class NodeRegistry {
 
     public enum Role {
         CLIENT_NODE,
-        INCOMING_TEST_MASTER
+        INCOMING_TEST_MASTER,
+        BATCH_SERVER_CLIENT
     }
-    // --- END Public static nested Enums and Class ---
 
-
-    private final ConcurrentHashMap<String, NodeInfo> clientNodes; // nodeId -> NodeInfo (for CLIENT_NODE)
-    private final ConcurrentHashMap<WebSocket, NodeInfo> allConnections; // WebSocket -> NodeInfo (all connections: CLIENT_NODE & INCOMING_TEST_MASTER)
-
-    private volatile WebSocket incomingTestMasterWebSocket = null; // Single incoming test master
+    private final ConcurrentHashMap<String, NodeInfo> identifiedClientsById;
+    private final ConcurrentHashMap<WebSocket, NodeInfo> allConnectionsByWebSocket;
+    private volatile WebSocket incomingTestMasterWebSocket = null;
     private final ScheduledExecutorService scheduler;
 
     public NodeRegistry() {
-        this.clientNodes = new ConcurrentHashMap<>();
-        this.allConnections = new ConcurrentHashMap<>();
+        this.identifiedClientsById = new ConcurrentHashMap<>();
+        this.allConnectionsByWebSocket = new ConcurrentHashMap<>();
         this.scheduler = Executors.newSingleThreadScheduledExecutor();
         scheduler.scheduleAtFixedRate(this::checkNodeStates, 10, 10, TimeUnit.SECONDS);
-        System.out.println("NodeRegistry: Initialized. Node state monitoring started.");
+        logger.info("NodeRegistry: Initialized. Node state monitoring started.");
     }
 
     public NodeInfo registerClientNode(String nodeId, WebSocket conn) {
-        NodeInfo newNodeInfo = new NodeInfo(conn, nodeId, Role.CLIENT_NODE);
-        newNodeInfo.authenticated = true; // Assuming nodeId in URL is authentication for now
-        
-        NodeInfo oldInfo = clientNodes.put(nodeId, newNodeInfo); // Replaces if nodeId already exists
-        allConnections.put(conn, newNodeInfo);
-
-        if (oldInfo != null && oldInfo.conn != conn && oldInfo.conn.isOpen()) {
-            oldInfo.conn.close(1000, "Replaced by new connection for same nodeId: " + nodeId);
-            System.out.println("NodeRegistry: Replacement: Old connection for node " + nodeId + " closed.");
+        if (identifiedClientsById.containsKey(nodeId)) {
+            NodeInfo existingInfo = identifiedClientsById.get(nodeId);
+            if (existingInfo.conn != conn && existingInfo.conn.isOpen()) {
+                logger.warn("NodeRegistry: Node ID '{}' is already in use by an active connection. Closing old connection.", nodeId);
+                existingInfo.conn.close(1000, "Replaced by new connection for same ID");
+            }
+            allConnectionsByWebSocket.remove(existingInfo.conn);
         }
-        System.out.println("NodeRegistry: Node '" + nodeId + "' registered. Active CLIENT_NODES: " + clientNodes.size());
+
+        NodeInfo newNodeInfo = new NodeInfo(nodeId, conn, Role.CLIENT_NODE);
+        identifiedClientsById.put(nodeId, newNodeInfo);
+        allConnectionsByWebSocket.put(conn, newNodeInfo);
+
+        logger.info("NodeRegistry: RPA CLIENT_NODE '{}' registered. Total Identified Clients: {}", nodeId, identifiedClientsById.size());
         return newNodeInfo;
     }
 
     public boolean registerIncomingTestMaster(WebSocket conn) {
         if (incomingTestMasterWebSocket == null || !incomingTestMasterWebSocket.isOpen()) {
             incomingTestMasterWebSocket = conn;
-            allConnections.put(conn, new NodeInfo(conn, "INCOMING_TEST_MASTER", Role.INCOMING_TEST_MASTER));
-            System.out.println("NodeRegistry: INCOMING Mock Master Server registered from " + conn.getRemoteSocketAddress().getAddress().getHostAddress());
+            allConnectionsByWebSocket.put(conn, new NodeInfo("INCOMING_TEST_MASTER", conn, Role.INCOMING_TEST_MASTER));
+            logger.info("NodeRegistry: INCOMING Test Master Server registered from {}", conn.getRemoteSocketAddress().getAddress().getHostAddress());
             return true;
         } else {
-            System.out.println("NodeRegistry: Another INCOMING Mock Master tried to connect. Only one test master allowed. Closing connection from " + conn.getRemoteSocketAddress().getAddress().getHostAddress());
+            logger.warn("NodeRegistry: Another INCOMING Test Master tried to connect from {}. Only one test master allowed. Closing connection.", conn.getRemoteSocketAddress().getAddress().getHostAddress());
             conn.close(1008, "Only one test master is allowed.");
             return false;
         }
     }
 
+    public NodeInfo registerBatchServerClient(String clientId, WebSocket conn) {
+        if (identifiedClientsById.containsKey(clientId)) {
+            NodeInfo existingInfo = identifiedClientsById.get(clientId);
+            if (existingInfo.conn != conn && existingInfo.conn.isOpen()) {
+                logger.warn("NodeRegistry: Batch Server Client ID '{}' is already in use by an active connection. Closing old connection.", clientId);
+                existingInfo.conn.close(1000, "Replaced by new connection for same ID");
+            }
+            allConnectionsByWebSocket.remove(existingInfo.conn);
+        }
+
+        NodeInfo newClientInfo = new NodeInfo(clientId, conn, Role.BATCH_SERVER_CLIENT);
+        identifiedClientsById.put(clientId, newClientInfo);
+        allConnectionsByWebSocket.put(conn, newClientInfo);
+
+        logger.info("NodeRegistry: Registered Batch Server Client: {}. Total Identified Clients: {}", clientId, identifiedClientsById.size());
+        return newClientInfo;
+    }
+
+    public WebSocket getBatchServerClientWebSocket(String clientId) {
+        NodeInfo info = identifiedClientsById.get(clientId);
+        if (info != null && info.role == Role.BATCH_SERVER_CLIENT && info.conn != null && info.conn.isOpen()) {
+            return info.conn;
+        }
+        return null;
+    }
+
     public NodeInfo unregisterConnection(WebSocket conn) {
-        NodeInfo info = allConnections.remove(conn);
+        NodeInfo info = allConnectionsByWebSocket.remove(conn);
         if (info != null) {
-            if (info.role == Role.CLIENT_NODE) {
-                clientNodes.remove(info.nodeId);
-                System.out.println("NodeRegistry: CLIENT_NODE '" + info.nodeId + "' disconnected. Active CLIENT_NODES: " + clientNodes.size());
+            if (info.role == Role.CLIENT_NODE || info.role == Role.BATCH_SERVER_CLIENT) {
+                identifiedClientsById.remove(info.nodeId);
+                logger.warn("NodeRegistry: {} '{}' disconnected. Total Identified Clients: {}", info.role, info.nodeId, identifiedClientsById.size());
             } else if (info.role == Role.INCOMING_TEST_MASTER) {
-                System.out.println("NodeRegistry: INCOMING Mock Master Server disconnected.");
+                logger.warn("NodeRegistry: INCOMING Test Master Server disconnected.");
                 incomingTestMasterWebSocket = null;
             }
         } else {
-            System.out.println("NodeRegistry: Attempted to unregister an unknown connection.");
+            logger.warn("NodeRegistry: Attempted to unregister an unknown connection.");
         }
         return info;
     }
 
-    public NodeInfo getClientNodeInfo(String nodeId) {
-        return clientNodes.get(nodeId);
+    public NodeInfo getClientNodeInfo(String id) {
+        return identifiedClientsById.get(id);
     }
 
     public NodeInfo getNodeInfoByConnection(WebSocket conn) {
-        return allConnections.get(conn);
+        return allConnectionsByWebSocket.get(conn);
     }
 
     public boolean isIncomingTestMaster(WebSocket conn) {
@@ -136,46 +171,71 @@ public class NodeRegistry {
     }
 
     public Map<String, NodeInfo> getActiveClientNodes() {
-        return Collections.unmodifiableMap(clientNodes);
+        ConcurrentHashMap<String, NodeInfo> activeNodes = new ConcurrentHashMap<>();
+        for (Map.Entry<String, NodeInfo> entry : identifiedClientsById.entrySet()) {
+            if (entry.getValue().conn != null && entry.getValue().conn.isOpen() &&
+               (entry.getValue().role == Role.CLIENT_NODE || entry.getValue().role == Role.BATCH_SERVER_CLIENT)) {
+                activeNodes.put(entry.getKey(), entry.getValue());
+            }
+        }
+        return Collections.unmodifiableMap(activeNodes);
     }
 
-    public boolean disconnectClientNode(String nodeId) {
-        NodeInfo info = clientNodes.remove(nodeId);
+    public Map<String, NodeInfo> getAllClientNodeInfo() {
+        return Collections.unmodifiableMap(identifiedClientsById);
+    }
+
+    public boolean disconnectClientNode(String id) {
+        NodeInfo info = identifiedClientsById.get(id); // Get info first, don't remove yet
         if (info != null && info.conn != null && info.conn.isOpen()) {
             info.conn.close(1000, "Disconnected by server request");
-            allConnections.remove(info.conn);
-            System.out.println("NodeRegistry: CLIENT_NODE '" + nodeId + "' disconnected by server request.");
+            // The unregisterConnection (called by onClose) will handle actual removal from maps
+            logger.info("NodeRegistry: {} '{}' explicitly requested to disconnect by server.", info.role, id);
             return true;
         }
+        logger.warn("NodeRegistry: Attempted to explicitly disconnect unknown, non-active or non-client node: {}", id);
         return false;
     }
 
-    private void checkNodeStates() {
-        new HashSet<>(clientNodes.keySet()).forEach(nodeId -> {
-            NodeInfo info = clientNodes.get(nodeId);
-            if (info == null) return;
+    public void updateNodeStatus(String nodeId, String newStatus) {
+        NodeInfo info = identifiedClientsById.get(nodeId);
+        if (info != null && info.role == Role.CLIENT_NODE) { // Only update status for actual RPA nodes
+            try {
+                info.status = NodeStatus.valueOf(newStatus.toUpperCase());
+                info.updateActivity();
+                logger.info("NodeRegistry: RPA Node '{}' status updated to: {}", nodeId, newStatus);
+            } catch (IllegalArgumentException e) {
+                logger.warn("NodeRegistry: Invalid status '{}' received for RPA Node '{}'.", newStatus, nodeId);
+            }
+        } else {
+            logger.warn("NodeRegistry: Attempted to update status for unknown or non-RPA node: {}", nodeId);
+        }
+    }
 
-            if (info.status == NodeStatus.ACTIVE && info.isIdle()) {
-                info.status = NodeStatus.IDLE;
-                System.out.println("NodeRegistry: CLIENT_NODE '" + nodeId + "' marked as IDLE");
+    private void checkNodeStates() {
+        new HashSet<>(allConnectionsByWebSocket.keySet()).forEach(conn -> {
+            NodeInfo info = allConnectionsByWebSocket.get(conn);
+            if (info == null || !conn.isOpen()) {
+                if (info != null) {
+                    logger.debug("NodeRegistry: Found closed/null connection for {}. Unregistering.", info.nodeId);
+                }
+                unregisterConnection(conn);
+                return;
             }
 
-            if (info.shouldDisconnect()) {
-                System.out.println("NodeRegistry: CLIENT_NODE '" + nodeId + "' has been connected >30 minutes. Disconnecting.");
-                disconnectClientNode(nodeId);
+            if (info.role == Role.CLIENT_NODE || info.role == Role.BATCH_SERVER_CLIENT) {
+                if (info.status == NodeStatus.ACTIVE && info.isIdle()) {
+                    info.status = NodeStatus.IDLE;
+                    logger.info("NodeRegistry: {} '{}' marked as IDLE.", info.role, info.nodeId);
+                }
+
+                if (info.shouldDisconnect()) {
+                    logger.warn("NodeRegistry: {} '{}' has exceeded its connection lifespan ({} mins). Disconnecting.",
+                                 info.role, info.nodeId, NodeInfo.CONNECTION_LIFESPAN_MS / (60 * 1000));
+                    disconnectClientNode(info.nodeId); // Call disconnectClientNode here
+                }
             }
         });
     }
 
-    public static String getQueryParam(String resource, String key) {
-        if (resource == null || !resource.contains("?")) return null;
-        String query = resource.substring(resource.indexOf('?') + 1);
-        for (String param : query.split("&")) {
-            String[] kv = param.split("=", 2);
-            if (kv.length == 2 && kv[0].equals(key)) {
-                return URLDecoder.decode(kv[1], StandardCharsets.UTF_8);
-            }
-        }
-        return null;
-    }
 }

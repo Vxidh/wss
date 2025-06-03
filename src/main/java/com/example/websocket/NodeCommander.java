@@ -2,26 +2,28 @@
 package com.example.websocket;
 
 import com.google.gson.JsonObject;
-import com.example.websocket.NodeRegistry.NodeInfo; // Import NodeInfo from NodeRegistry
-import com.example.websocket.NodeRegistry.NodeStatus; // Import NodeStatus from NodeRegistry
+import com.example.websocket.NodeRegistry.NodeInfo; 
+import com.example.websocket.NodeRegistry.NodeStatus; 
+import com.google.gson.JsonParser;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import com.google.gson.JsonSyntaxException;
+import java.util.function.BiConsumer; 
 
 public class NodeCommander {
 
+    private static final Logger logger = LoggerFactory.getLogger(NodeCommander.class);
+
     private final NodeRegistry nodeRegistry;
 
-    public NodeCommander(NodeRegistry nodeRegistry) {
+    private final BiConsumer<NodeInfo, JsonObject> nodeResponseHandler;
+    public NodeCommander(NodeRegistry nodeRegistry, BiConsumer<NodeInfo, JsonObject> nodeResponseHandler) {
         this.nodeRegistry = nodeRegistry;
-        System.out.println("NodeCommander: Initialized.");
+        this.nodeResponseHandler = nodeResponseHandler; // Assign the handler
+        logger.info("NodeCommander: Initialized.");
     }
 
-    /**
-     * Sends a direct command to a specific client node without an associated requestId.
-     * This is useful for one-way commands or API-triggered actions.
-     *
-     * @param nodeId The ID of the target node.
-     * @param command The JSON command payload to send.
-     * @return true if the command was successfully sent, false otherwise (node not found, not active, etc.).
-     */
+
     public boolean sendToNode(String nodeId, JsonObject command) {
         NodeInfo info = nodeRegistry.getClientNodeInfo(nodeId);
         if (info != null && info.conn != null && info.conn.isOpen() && info.status == NodeStatus.ACTIVE) {
@@ -29,22 +31,12 @@ public class NodeCommander {
             wrapper.addProperty("type", "command");
             wrapper.add("command", command);
             info.conn.send(wrapper.toString());
-            System.out.println("📤 NodeCommander: Sent direct command to node " + nodeId + ": " + command.toString());
+            logger.info("NodeCommander: Sent direct command to node {}: {}", nodeId, command.toString());
             return true;
         }
-        System.out.println("❌ NodeCommander: Failed to send command to node " + nodeId + ": Node not found, not open, or idle.");
+        logger.warn("NodeCommander: Failed to send command to node {}: Node not found, not open, or idle.", nodeId);
         return false;
     }
-
-    /**
-     * Sends a command to a specific client node, including a requestId for tracking responses.
-     * This is used by the CommandOrchestrator to forward master commands.
-     *
-     * @param nodeId The ID of the target node.
-     * @param command The JSON command payload to send.
-     * @param requestId The requestId associated with the original command from the master.
-     * @return true if the command was successfully sent, false otherwise.
-     */
     public boolean sendToNodeWithRequestId(String nodeId, JsonObject command, String requestId) {
         NodeInfo info = nodeRegistry.getClientNodeInfo(nodeId);
         if (info != null && info.conn != null && info.conn.isOpen() && info.status == NodeStatus.ACTIVE) {
@@ -54,9 +46,32 @@ public class NodeCommander {
             wrapper.add("command", command);
 
             info.conn.send(wrapper.toString());
-            System.out.println("📤 NodeCommander: Forwarded command to node " + nodeId + " with requestId: " + requestId);
+            logger.info("NodeCommander: Forwarded command to node {} with requestId: {}", nodeId, requestId);
             return true;
         }
+        logger.warn("NodeCommander: Failed to forward command to node {}: Node not found, not open, or idle.", nodeId);
         return false;
+    }
+
+    public void handleIncomingNodeMessage(NodeInfo sender, String message) {
+        try {
+            JsonObject jsonMessage = JsonParser.parseString(message).getAsJsonObject();
+            String type = jsonMessage.has("type") ? jsonMessage.get("type").getAsString() : null;
+
+            if ("node_response".equals(type)) {
+                // Delegate the handling of the node response to the provided handler
+                if (nodeResponseHandler != null) {
+                    nodeResponseHandler.accept(sender, jsonMessage);
+                } else {
+                    logger.warn("NodeCommander: nodeResponseHandler is null. Cannot process node response for node {}: {}", sender.nodeId, message);
+                }
+            } else {
+                logger.warn("NodeCommander: Received unrecognized message type '{}' from node {}: {}", type, sender.nodeId, message);
+            }
+        } catch (JsonSyntaxException e) {
+            logger.warn("NodeCommander: Invalid JSON received from node {}: {}", sender.nodeId, message, e);
+        } catch (Exception e) {
+            logger.error("NodeCommander: Error processing message from node {}: {}", sender.nodeId, e.getMessage(), e);
+        }
     }
 }
