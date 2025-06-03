@@ -37,29 +37,26 @@ public class Server extends WebSocketServer implements IncomingTestMasterSender 
 
     private final CommandOrchestrator commandOrchestrator;
     private final NodeCommander nodeCommander;
+    private final String masterServerUrl;
 
-
-    public Server(int port) {
+    public Server(int port, String masterServerUrl) {
         super(new InetSocketAddress(port));
         logger.info("Server: Initializing on port {}", port); // Changed to logger.info
-
+        this.masterServerUrl = masterServerUrl;
         this.nodeRegistry = new NodeRegistry();
 
         this.upstreamMasterClient = new UpstreamMasterClient(
             sharedScheduler,
-            null,
+            this.masterServerUrl,
             this::handleMessageFromUpstreamMaster
         );
 
         this.nodeCommander = new NodeCommander(nodeRegistry);
 
         this.commandOrchestrator = new CommandOrchestrator(nodeRegistry, upstreamMasterClient, this.nodeCommander, this);
-    }
-
-    public void connectToUpstreamMaster(String masterUrl) {
-        this.upstreamMasterClient.setMasterServerUrl(masterUrl);
         this.upstreamMasterClient.connect();
     }
+
 
     public boolean sendToNode(String nodeId, JsonObject command) {
         return nodeCommander.sendToNode(nodeId, command);
